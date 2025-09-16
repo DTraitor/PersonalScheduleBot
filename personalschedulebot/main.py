@@ -92,9 +92,9 @@ async def ask_for_group(update: Update, context: ContextTypes.DEFAULT_TYPE, gree
     context.user_data[EXPECTING_MANUAL_GROUP] = True
     text = (
         "Вітаю! Цей бот здатен відсилати розклад певної групи на певну дату.\n\n"
-        "Введіть код вашої групи (наприклад: Б-121-22-4-ПІ)."
+        "Введіть код вашої групи (наприклад: Ба-121-22-4-ПІ)."
         if greeting
-        else "Введіть новий код вашої групи (наприклад: Б-121-22-4-ПІ)."
+        else "Введіть новий код вашої групи (наприклад: Ба-121-22-4-ПІ)."
     )
     await update.message.reply_text(text, reply_markup=ForceReply(selective=True))
 
