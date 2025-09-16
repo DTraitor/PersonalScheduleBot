@@ -31,4 +31,4 @@ COPY . .
 RUN poetry install --only-root
 
 # ---- Run bot ----
-CMD ["python", "-m", "telegram_bot"]
+CMD ["python", "-m", "personalschedulebot"]
