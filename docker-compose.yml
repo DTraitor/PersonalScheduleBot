@@ -6,6 +6,5 @@ services:
       - .:/app
 
 networks:
-  default:
-    external:
-      name: schedule-net
+  schedule-net:
+    external: true
