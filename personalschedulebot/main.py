@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import datetime, timedelta, date
-from typing import List, Optional
+from typing import List
 
 from telegram import (
     ForceReply,
@@ -21,8 +21,8 @@ from telegram.constants import (
     ParseMode,
 )
 
-from LessonMessageMapper import generate_telegram_message_from_list
-from ScheduleAPI import (
+from .LessonMessageMapper import generate_telegram_message_from_list
+from .ScheduleAPI import (
     get_schedule,
     user_exists,
     get_faculties,
