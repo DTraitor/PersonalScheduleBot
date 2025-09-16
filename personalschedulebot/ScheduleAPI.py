@@ -55,6 +55,8 @@ def user_exists(telegram_id: int) -> bool:
     result: httpx.Response = make_api_get_request("/user/exists", {
         "telegramId": telegram_id,
     })
+    print(result.status_code)
+    print(result.content)
     return result.json()
 
 
