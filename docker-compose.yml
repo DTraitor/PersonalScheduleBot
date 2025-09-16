@@ -1,0 +1,11 @@
+services:
+  telegram_bot:
+    build: .
+    container_name: poetry_app
+    volumes:
+      - .:/app
+
+networks:
+  default:
+    external:
+      name: schedule-net
