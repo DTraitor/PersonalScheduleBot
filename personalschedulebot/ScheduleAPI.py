@@ -1,11 +1,12 @@
 import json
+import os
 from datetime import datetime
 from .Lesson import Lesson
 from typing import List
 import httpx
 
 
-SCHEDULE_API = "http://api:5110/api"
+SCHEDULE_API = os.environ["SCHEDULE_API"]
 
 def make_api_get_request(url_path: str, params: dict) -> httpx.Response:
     return httpx.get(SCHEDULE_API + url_path, params=params)
