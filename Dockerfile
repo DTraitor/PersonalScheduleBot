@@ -22,7 +22,7 @@ WORKDIR /app
 
 # ---- Install dependencies ----
 COPY pyproject.toml poetry.lock* ./
-RUN poetry install --no-root --no-dev
+RUN poetry install --no-root --without dev
 
 # ---- Copy source code ----
 COPY . .
