@@ -220,9 +220,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/start - почати\n"
         "/change_group - змінити групу\n"
         "/schedule [<code>DD.MM</code>] - розклад на сьогодні або вказану дату\n"
-        "/te (alias of /schedule)\n"
         "/tomorrow - розклад на завтра\n"
-        "/te_t - alias of /tomorrow\n"
     )
 
 

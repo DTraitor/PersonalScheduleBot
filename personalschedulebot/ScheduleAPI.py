@@ -5,7 +5,7 @@ from typing import List
 import httpx
 
 
-SCHEDULE_API = "http://localhost:5110/api"
+SCHEDULE_API = "http://schedule_app:5110/api"
 
 def make_api_get_request(url_path: str, params: dict) -> httpx.Response:
     return httpx.get(SCHEDULE_API + url_path, params=params)
