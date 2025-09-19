@@ -1,10 +1,12 @@
 import json
 import os
 from datetime import datetime
-from .Lesson import Lesson
+from Lesson import Lesson
 from typing import List
 import httpx
 
+from personalschedulebot.ElectiveLesson import ElectiveLesson
+from personalschedulebot.ElectiveLessonDay import ElectiveLessonDay
 
 SCHEDULE_API = os.environ["SCHEDULE_API"]
 
@@ -26,6 +28,10 @@ def make_api_patch_request(url_path: str, params: dict, content: dict) -> httpx.
         params=params,
         headers={"Content-Type": "application/json"},
         content=json.dumps(content))
+
+
+def make_api_delete_request(url_path: str, params: dict) -> httpx.Response:
+    return httpx.get(SCHEDULE_API + url_path, params=params)
 
 
 def get_schedule(
@@ -55,8 +61,6 @@ def user_exists(telegram_id: int) -> bool:
     result: httpx.Response = make_api_get_request("/user/exists", {
         "telegramId": telegram_id,
     })
-    print(result.status_code)
-    print(result.content)
     return result.json()
 
 
@@ -74,3 +78,40 @@ def change_user_group(telegram_id: int, new_group_code: str) -> bool:
         "GroupName": new_group_code,
     })
     return result.status_code == 200
+
+
+def get_possible_days() -> List[ElectiveLessonDay]:
+    result: httpx.Response = make_api_get_request("/elective/days", {})
+    return [ElectiveLessonDay(item) for item in result.json()]
+
+
+def get_possible_lessons(elective_day_id: int, partial_name: str) -> List[ElectiveLesson]:
+    result: httpx.Response = make_api_get_request("/elective/lessons", {
+        "ElectiveDayId": elective_day_id,
+        "PartialLessonName": partial_name,
+    })
+    return [ElectiveLesson(item) for item in result.json()]
+
+
+def get_user_elective_lessons(telegram_id: int) -> List[ElectiveLesson]:
+    result: httpx.Response = make_api_get_request("/elective", {
+        "TelegramId": telegram_id,
+    })
+    return [ElectiveLesson(item) for item in result.json()]
+
+
+def create_user_elective_lesson(telegram_id: int, lesson_id: int) -> bool:
+    result: httpx.Response = make_api_get_request("/elective", {
+        "TelegramId": telegram_id,
+        "LessonId": lesson_id,
+    })
+    return result.status_code == 200
+
+
+def delete_user_elective_lessons(telegram_id: int, lesson_id: int) -> bool:
+    result: httpx.Response = make_api_delete_request("/elective", {
+        "TelegramId": telegram_id,
+        "LessonId": lesson_id,
+    })
+    return result.status_code == 200
+
