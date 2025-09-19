@@ -22,8 +22,8 @@ from telegram.ext import (
 from telegram.constants import ParseMode
 import pytz
 
-from LessonMessageMapper import generate_telegram_message_from_list
-from ScheduleAPI import (
+from personalschedulebot.LessonMessageMapper import generate_telegram_message_from_list
+from personalschedulebot.ScheduleAPI import (
     get_schedule,
     user_exists,
     get_faculties,

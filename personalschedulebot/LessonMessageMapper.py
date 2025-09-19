@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from Lesson import Lesson
+from personalschedulebot.Lesson import Lesson
 from typing import List
 
 
