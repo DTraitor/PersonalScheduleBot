@@ -31,7 +31,7 @@ def make_api_patch_request(url_path: str, params: dict, content: dict) -> httpx.
 
 
 def make_api_delete_request(url_path: str, params: dict) -> httpx.Response:
-    return httpx.get(SCHEDULE_API + url_path, params=params)
+    return httpx.delete(SCHEDULE_API + url_path, params=params)
 
 
 def get_schedule(
@@ -101,11 +101,11 @@ def get_user_elective_lessons(telegram_id: int) -> List[ElectiveLesson]:
 
 
 def create_user_elective_lesson(telegram_id: int, lesson_id: int) -> bool:
-    result: httpx.Response = make_api_get_request("/elective", {
+    result: httpx.Response = make_api_post_request("/elective", {}, {
         "TelegramId": telegram_id,
-        "LessonId": lesson_id,
+        "ElectiveLessonId": lesson_id,
     })
-    return result.status_code == 200
+    return result.status_code == 201
 
 
 def delete_user_elective_lessons(telegram_id: int, lesson_id: int) -> bool:

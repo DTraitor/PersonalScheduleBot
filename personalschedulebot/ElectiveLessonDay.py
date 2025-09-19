@@ -10,6 +10,6 @@ class ElectiveLessonDay:
 
     def __init__(self, data: dict):
         self.id = data["id"]
-        self.week_number = data["weekNumber"]
-        self.day_of_week = data["dayOfWeek"]
-        self.begin_time = datetime.strptime(data["beginTime"], "%H:%M:%S").time()
+        self.week_number = int(data["weekNumber"])
+        self.day_of_week = int(data["dayOfWeek"])
+        self.begin_time = datetime.strptime(data["startTime"], "%H:%M:%S").time()
