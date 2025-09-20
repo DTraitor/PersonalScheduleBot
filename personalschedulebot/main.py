@@ -356,7 +356,7 @@ async def handle_elective_partial_name_input(update: Update, context: ContextTyp
     kb = []
     for r in results:
         label_type = r.lesson_type if r.lesson_type else "-"
-        label = f"{r.title} | {label_type}"
+        label = f"{label_type} | {r.title}"
         kb.append([InlineKeyboardButton(label[:64], callback_data=f"EL_CHOICE|{r.id}")])  # truncate label if too long
 
     await update.message.reply_text("Оберіть предмет зі списку:", reply_markup=InlineKeyboardMarkup(kb))
