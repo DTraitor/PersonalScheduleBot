@@ -73,7 +73,7 @@ def create_user(telegram_id: int, group_code: str) -> bool:
 
 
 def change_user_group(telegram_id: int, new_group_code: str) -> bool:
-    result: httpx.Response = make_api_patch_request("/user", {}, {
+    result: httpx.Response = make_api_patch_request("/user/group", {}, {
         "TelegramId": telegram_id,
         "GroupName": new_group_code,
     })
