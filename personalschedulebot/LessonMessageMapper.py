@@ -5,10 +5,10 @@ from typing import List
 
 
 def generate_telegram_message_from_list(lessons: List[Lesson], date: datetime, week_number: int) -> str:
-    if not len(lessons):
-        return f'{date.strftime("%d.%m")} ніяких пар немає!'
     result: str = f'<b>Пари на {date.strftime("%d.%m")} '
     result += f'({date.strftime("%A").capitalize()} {str(week_number)}):</b>\n\n'
+    if not len(lessons):
+        return result + f'Протягом дня пари відсутні! 🥳'
     result += '\n'.join([generate_telegram_message(lesson) for lesson in lessons])
     return result
 
