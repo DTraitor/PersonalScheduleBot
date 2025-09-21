@@ -4,6 +4,7 @@ import logging
 import os
 from datetime import datetime, timedelta, date
 from typing import List
+from zoneinfo import ZoneInfo
 
 from telegram import (
     ForceReply,
@@ -20,7 +21,6 @@ from telegram.ext import (
     filters,
 )
 from telegram.constants import ParseMode
-import pytz
 
 from personalschedulebot.LessonMessageMapper import generate_telegram_message_from_list
 from personalschedulebot.ScheduleAPI import (
@@ -155,12 +155,12 @@ async def render_schedule(update_or_query, context: ContextTypes.DEFAULT_TYPE, t
         return
 
     # Use current date if not provided
-    user_tz = pytz.timezone("Europe/Kiev")  # Replace with user-specific TZ if available
-    now = datetime.now(tz=user_tz)
-    target_date = target_date.astimezone(user_tz) if target_date else now
+    if target_date is None:
+        user_tz = ZoneInfo("Europe/Kyiv")  # Replace with user-specific TZ if available
+        target_date = datetime.now(tz=user_tz)
 
     # Fetch lessons (API expects naive datetime)
-    lessons = get_schedule(target_date.replace(tzinfo=None), tg_id)
+    lessons = get_schedule(target_date, tg_id)
     lessons.sort(key=lambda l: l.begin_time)
 
     text = generate_telegram_message_from_list(lessons, target_date, week_parity(target_date.year, target_date.date()))
@@ -178,7 +178,8 @@ async def render_schedule(update_or_query, context: ContextTypes.DEFAULT_TYPE, t
 async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if context.args:
         try:
-            given_date = datetime.strptime(context.args[0], "%d.%m").replace(year=datetime.now().year)
+            user_zone = ZoneInfo("Europe/Kyiv")
+            given_date = datetime.strptime(context.args[0], "%d.%m").replace(year=datetime.now().year, tzinfo=user_zone)
         except ValueError:
             await update.message.reply_html("Невірний формат дати. Використовуйте <code>ДД.MM</code> (наприклад, 20.09).")
             return
@@ -189,7 +190,8 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def tomorrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    target = datetime.now() + timedelta(days=1)
+    user_zone = ZoneInfo("Europe/Kyiv")
+    target = datetime.now(tz=user_zone) + timedelta(days=1)
     await render_schedule(update, context, target_date=target)
 
 
@@ -206,6 +208,7 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
             return
         try:
             current_date = datetime.strptime(parts[1], "%Y-%m-%d")
+            current_date = current_date.replace(tzinfo=ZoneInfo("Europe/Kyiv"))
         except ValueError:
             return
         new_date = current_date + timedelta(days=-1 if parts[2] == "PREV" else 1 if parts[2] == "NEXT" else 0)

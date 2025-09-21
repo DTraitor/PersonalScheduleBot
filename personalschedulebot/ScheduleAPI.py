@@ -10,6 +10,7 @@ from personalschedulebot.ElectiveLessonDay import ElectiveLessonDay
 
 SCHEDULE_API = os.environ["SCHEDULE_API"]
 
+
 def make_api_get_request(url_path: str, params: dict) -> httpx.Response:
     return httpx.get(SCHEDULE_API + url_path, params=params)
 
