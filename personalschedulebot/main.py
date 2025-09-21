@@ -160,7 +160,7 @@ async def render_schedule(update_or_query, context: ContextTypes.DEFAULT_TYPE, t
     target_date = target_date.astimezone(user_tz) if target_date else now
 
     # Fetch lessons (API expects naive datetime)
-    lessons = get_schedule(target_date.replace(tzinfo=None) - timedelta(hours=24), tg_id)
+    lessons = get_schedule(target_date.replace(tzinfo=None), tg_id)
     lessons.sort(key=lambda l: l.begin_time)
 
     text = generate_telegram_message_from_list(lessons, target_date, week_parity(target_date.year, target_date.date()))
