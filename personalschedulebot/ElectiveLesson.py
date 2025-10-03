@@ -26,7 +26,7 @@ class ElectiveLesson:
             self.lesson_type = None
 
         if "teacher" in data:
-            self.teacher = data["teacher"][0]
+            self.teacher = data["teacher"]
         else:
             self.teacher = None
 

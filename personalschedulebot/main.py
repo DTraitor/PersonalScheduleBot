@@ -35,16 +35,18 @@ from personalschedulebot.ScheduleAPI import (
     get_possible_lessons,
     get_user_elective_lessons,
     create_user_elective_lesson,
-    delete_user_elective_lessons,
+    delete_user_elective_lessons, get_user_alerts,
 )
 from personalschedulebot.ElectiveLesson import ElectiveLesson
 from personalschedulebot.ElectiveLessonDay import ElectiveLessonDay
+from personalschedulebot.UserAlert import UserAlert, UserAlertType
 
 # Enable logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 EXPECTING_MANUAL_GROUP = "expecting_manual_group"  # flag in user_data
@@ -114,9 +116,11 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
         tg_id = update.message.from_user.id
 
         if user_exists(tg_id):
-            ok = change_user_group(tg_id, group_code)
-            if ok:
+            result = change_user_group(tg_id, group_code)
+            if result == 0:
                 await update.message.reply_html(f"Група змінена на <b>{group_code}</b>.")
+            elif result == 1:
+                await update.message.reply_html(f"Не вірна назва групи.")
             else:
                 await update.message.reply_text("Не вдалося змінити групу. Спробуйте пізніше.")
         else:
@@ -476,7 +480,7 @@ async def handle_elective_view(query, context: ContextTypes.DEFAULT_TYPE, lesson
         return
 
     # build descriptive text
-    teacher = chosen.teacher or "-"
+    teacher = chosen.teacher[0] if len(chosen.teacher) > 0 else "-"
     location = chosen.location or "-"
     length_str = (datetime.combine(datetime.now(), chosen.begin_time) + chosen.duration).strftime("%H:%M")
     text = (
@@ -530,6 +534,48 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
+async def alert_users(context: ContextTypes.DEFAULT_TYPE) -> None:
+    alert: UserAlert
+    for alert in get_user_alerts(100):
+        match alert.alert_type:
+            case UserAlertType.GROUP_REMOVED:
+                msg = generate_group_deleted_message(alert)
+                await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
+            case UserAlertType.ELECTIVE_LESSON_REMOVED:
+                msg = generate_elective_deleted_message(alert)
+                await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
+            case _:
+                continue
+
+
+def generate_group_deleted_message(alert: UserAlert) -> str:
+    result = f"⚠️ <b>Ваша група '{alert.options['GroupName']}' була видалена з розкладу.</b>\n"
+    result += "Будь ласка, оберіть нову групу командою /change_group."
+    result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку бота."
+    return result
+
+
+def generate_elective_deleted_message(alert: UserAlert) -> str:
+    lesson_start_times = {
+        "1": "8:00",
+        "2": "9:50",
+        "3": "11:40",
+        "4": "13:30",
+        "5": "15:20",
+        "6": "17:10",
+        "7": "19:00",
+    }
+    result = f"⚠️ <b>Ваша вибірково пара була видалена з розкладу.</b>\n"
+    result += f"<b>Предмет:</b> {alert.options['LessonName']}\n"
+    result += f"<b>Вид:</b> {alert.options['LessonType']}\n"
+    result += f"<b>Тиждень:</b> {(int(alert.options['LessonDay']) // 7) + 1}\n"
+    result += f"<b>День:</b> {calendar.day_name[int(alert.options['LessonDay']) % 7]}\n"
+    result += f"<b>Час:</b> {lesson_start_times[alert.options['LessonStartTime']]}\n\n"
+    result += "Аби додати іншу вибіркову скористайтесь /elective_add.\n"
+    result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку бота."
+    return result
+
+
 def main() -> None:
     token = os.environ["BOT_TOKEN"]
     application = Application.builder().token(token).build()
@@ -559,6 +605,7 @@ def main() -> None:
             BotCommand("help", "Список команд"),
         ])
 
+    application.job_queue.run_repeating(alert_users, interval=5, first=5)
     application.post_init = post_init
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 

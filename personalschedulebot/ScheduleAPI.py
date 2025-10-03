@@ -7,6 +7,7 @@ import httpx
 
 from personalschedulebot.ElectiveLesson import ElectiveLesson
 from personalschedulebot.ElectiveLessonDay import ElectiveLessonDay
+from personalschedulebot.UserAlert import UserAlert
 
 SCHEDULE_API = os.environ["SCHEDULE_API"]
 
@@ -73,12 +74,18 @@ def create_user(telegram_id: int, group_code: str) -> bool:
     return result.status_code == 201
 
 
-def change_user_group(telegram_id: int, new_group_code: str) -> bool:
+def change_user_group(telegram_id: int, new_group_code: str) -> int:
     result: httpx.Response = make_api_patch_request("/user/group", {}, {
         "TelegramId": telegram_id,
         "GroupName": new_group_code,
     })
-    return result.status_code == 200
+    match result.status_code:
+        case 200:
+            return 0
+        case 404:
+            return 1
+        case _:
+            return -1
 
 
 def get_possible_days() -> List[ElectiveLessonDay]:
@@ -116,3 +123,9 @@ def delete_user_elective_lessons(telegram_id: int, lesson_id: int) -> bool:
     })
     return result.status_code == 200
 
+
+def get_user_alerts(batch_size: int) -> List[UserAlert]:
+    result: httpx.Response = make_api_get_request("/UserAlerts", {
+        "batchSize": batch_size
+    })
+    return [UserAlert(item) for item in result.json()]
