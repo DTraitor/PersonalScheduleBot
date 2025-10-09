@@ -112,7 +112,7 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
         return
 
     if context.user_data.get(EXPECTING_MANUAL_GROUP):
-        group_code = update.message.text.strip()
+        group_code = update.message.text.strip().upper()
         tg_id = update.message.from_user.id
 
         if user_exists(tg_id):
