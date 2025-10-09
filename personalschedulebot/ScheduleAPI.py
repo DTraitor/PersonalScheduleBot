@@ -66,12 +66,18 @@ def user_exists(telegram_id: int) -> bool:
     return result.json()
 
 
-def create_user(telegram_id: int, group_code: str) -> bool:
+def create_user(telegram_id: int, group_code: str) -> int:
     result: httpx.Response = make_api_post_request("/user", {}, {
         "TelegramId": telegram_id,
         "GroupName": group_code,
     })
-    return result.status_code == 201
+    match result.status_code:
+        case 201:
+            return 0
+        case 404:
+            return 1
+        case _:
+            return -1
 
 
 def change_user_group(telegram_id: int, new_group_code: str) -> int:

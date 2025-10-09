@@ -86,7 +86,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    await ask_for_group(update, context, greeting=True)
+    await ask_for_group(update, context)
 
 
 async def change_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -96,14 +96,12 @@ async def change_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await ask_for_group(update, context)
 
 
-async def ask_for_group(update: Update, context: ContextTypes.DEFAULT_TYPE, greeting: bool = False) -> None:
+async def ask_for_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data[EXPECTING_MANUAL_GROUP] = True
     text = (
-        "Вітаю! Введіть код вашої групи (наприклад: Ба-121-22-4-ПІ)."
-        if greeting
-        else "Введіть новий код вашої групи (наприклад: Ба-121-22-4-ПІ)."
+        "Введіть код вашої групи (наприклад: Ба-121-22-4-ПІ).\n\n<i>У разі виникнення проблем, звертайтесь до</i> @kaidigital_bot"
     )
-    await update.message.reply_text(text, reply_markup=ForceReply(selective=True))
+    await update.message.reply_html(text, reply_markup=ForceReply(selective=True))
 
 
 async def manual_group_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -112,7 +110,7 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
         return
 
     if context.user_data.get(EXPECTING_MANUAL_GROUP):
-        group_code = update.message.text.strip().upper()
+        group_code = update.message.text.strip()
         tg_id = update.message.from_user.id
 
         if user_exists(tg_id):
@@ -122,15 +120,17 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
             elif result == 1:
                 await update.message.reply_html(f"Не вірна назва групи.")
             else:
-                await update.message.reply_text("Не вдалося змінити групу. Спробуйте пізніше.")
+                await update.message.reply_text("Не вдалося змінити групу.\nЗверніться у підтримку @kaidigital_bot.")
         else:
-            ok = create_user(tg_id, group_code)
-            if ok:
+            result = create_user(tg_id, group_code)
+            if result == 0:
                 await update.message.reply_html(
-                    f"Група встановлена: <b>{group_code}</b>.\nВикористайте /schedule щоб отримати розклад."
+                    f"Група встановлена: <b>{group_code}</b>.\n\nВикористайте /schedule щоб отримати розклад.\nВикористайте /elective_add для додавання вибіркових дисциплін."
                 )
+            elif result == 1:
+                await update.message.reply_html(f"Не вірна назва групи.")
             else:
-                await update.message.reply_text("Не вдалося створити користувача. Спробуйте пізніше.")
+                await update.message.reply_text("Не вдалося створити користувача.\nЗверніться у підтримку @kaidigital_bot.")
 
         context.user_data.pop(EXPECTING_MANUAL_GROUP, None)
         return
@@ -531,6 +531,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/elective_add - додати вибіркову пару\n"
         "/elective_list - показати ваші вибіркові пари\n"
         "/help - список команд\n"
+        "\n<i>У разі виникнення проблем, звертайтесь до</i> @kaidigital_bot"
     )
 
 
