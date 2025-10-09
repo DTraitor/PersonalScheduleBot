@@ -22,6 +22,6 @@ def generate_telegram_message(lesson: Lesson) -> str:
     if len(lesson.teacher) > 0:
         result += f' {lesson.teacher[0]} |'
 
-    result += f' <a href="{lesson.location}">Посилання</a>' if re.match(r"^https:\\/\\/.*$", lesson.location) else lesson.location
+    result += f' <a href="{lesson.location}">Посилання</a>' if re.match(r"^https:\\/\\/.*$", lesson.location) else ' ' + lesson.location
 
     return result
