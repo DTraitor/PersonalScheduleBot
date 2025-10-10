@@ -1,7 +1,7 @@
-# main.py (updated with elective flows)
 import calendar
 import logging
 import os
+import locale
 from datetime import datetime, timedelta, date
 from typing import List
 from zoneinfo import ZoneInfo
@@ -26,8 +26,6 @@ from personalschedulebot.LessonMessageMapper import generate_telegram_message_fr
 from personalschedulebot.ScheduleAPI import (
     get_schedule,
     user_exists,
-    get_faculties,
-    get_groups,
     create_user,
     change_user_group,
     # elective API functions
@@ -68,8 +66,8 @@ def week_parity(reference_year: int, check_date: date = None) -> int:
     if check_date is None:
         check_date = date.today()
     sept1 = date(reference_year, 9, 1)
-    if check_date < sept1:
-        raise ValueError("check_date must not be before September 1 of the given year")
+    #if check_date < sept1:
+    #    raise ValueError("check_date must not be before September 1 of the given year")
     weeks = (check_date - sept1).days // 7
     return 1 if weeks % 2 == 0 else 2
 
@@ -79,14 +77,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
         return
 
-    tg_id = update.message.from_user.id
-    if user_exists(tg_id):
-        await update.message.reply_html(
-            "Ваша група вже встановлена. Використайте команду /schedule щоб отримати розклад на сьогодні або /change_group щоб змінити групу."
-        )
-        return
+    welcome_message = 'Привіт!\nЦей бот здатен відображати заняття за розкладом групи та вибіркові дисципліни.\n'
 
-    await ask_for_group(update, context)
+    welcome_message += '\n• /change_group - обрання своєї групи'
+    welcome_message += '\n• /elective_add - додавання вибіркових'
+    welcome_message += '\n• /schedule - перегляд розкладу'
+
+    welcome_message += '\n\nУ разі виникнення проблем, звертайся до @kaidigital_bot'
+
+    await update.message.reply_html(welcome_message)
+
+
+async def display_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    week_message = f'📗 Триває {str(week_parity(datetime.now().year, datetime.now().date()))}-й тиждень.\n'
+
+    week_message += '\n⏰ Початок та кінець пар:'
+    week_message += '\n• 1 пара - 8.00 - 9.35'
+    week_message += '\n• 2 пара - 9.50 - 11.25'
+    week_message += '\n• 3 пара - 11.40 - 13.15'
+    week_message += '\n• 4 пара - 13.30 - 15.05'
+    week_message += '\n• 5 пара - 15.20 - 16.55'
+    week_message += '\n• 6 пара - 17.10 - 18.45'
+    week_message += '\n• 7 пара - 19.00 - 20.35'
+
+    week_message += '\n\n• • • • • • • • • • • • • • • • • • •\n🤖 Надіслано ботом @schedulekai_bot'
+
+    await update.message.reply_html(week_message)
 
 
 async def change_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -99,7 +115,7 @@ async def change_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def ask_for_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data[EXPECTING_MANUAL_GROUP] = True
     text = (
-        "Введіть код вашої групи (наприклад: Ба-121-22-4-ПІ).\n\n<i>У разі виникнення проблем, звертайтесь до</i> @kaidigital_bot"
+        "Введіть код вашої групи (наприклад: Ба-121-22-4-ПІ).\n\n<i>У разі виникнення проблем, звертайся до</i> @kaidigital_bot"
     )
     await update.message.reply_html(text, reply_markup=ForceReply(selective=True))
 
@@ -524,14 +540,15 @@ async def handle_elective_remove(query, context: ContextTypes.DEFAULT_TYPE, less
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(
-        "/start - почати\n"
-        "/change_group - змінити групу\n"
-        "/schedule [<code>DD.MM</code>] - розклад на сьогодні або дату\n"
-        "/tomorrow - розклад на завтра\n"
-        "/elective_add - додати вибіркову пару\n"
-        "/elective_list - показати ваші вибіркові пари\n"
-        "/help - список команд\n"
-        "\n<i>У разі виникнення проблем, звертайтесь до</i> @kaidigital_bot"
+        "• /start - почати\n"
+        "• /change_group - змінити групу\n"
+        "• /schedule [<code>DD.MM</code>] - розклад на сьогодні або дату\n"
+        "• /tomorrow - розклад на завтра\n"
+        "• /elective_add - додати вибіркове заняття\n"
+        "• /elective_list - показати ваші вибіркові заняття\n"
+        "• /week - відобразити навчальний тиждень\n"
+        "• /help - список команд\n"
+        "\n<i>У разі виникнення проблем, звертайся до</i> @kaidigital_bot"
     )
 
 
@@ -578,6 +595,8 @@ def generate_elective_deleted_message(alert: UserAlert) -> str:
 
 
 def main() -> None:
+    locale.setlocale(locale.LC_ALL, 'uk_UA.UTF-8')
+
     token = os.environ["BOT_TOKEN"]
     application = Application.builder().token(token).build()
 
@@ -587,6 +606,8 @@ def main() -> None:
     application.add_handler(CommandHandler(["schedule", "te"], schedule_command))
     application.add_handler(CommandHandler(["tomorrow", "te_t"], tomorrow_command))
     application.add_handler(CommandHandler("help", help_command))
+
+    application.add_handler(CommandHandler("week", display_week))
 
     # elective handlers
     application.add_handler(CommandHandler("elective_add", elective_add_command))
@@ -601,8 +622,9 @@ def main() -> None:
             BotCommand("change_group", "Змінити групу"),
             BotCommand("schedule", "Розклад на сьогодні або дату"),
             BotCommand("tomorrow", "Розклад на завтра"),
-            BotCommand("elective_add", "Додати вибіркову пару"),
-            BotCommand("elective_list", "Переглянути ваші вибіркові пари"),
+            BotCommand("elective_add", "Додати вибіркове заняття"),
+            BotCommand("elective_list", "Переглянути ваші вибіркові заняття"),
+            BotCommand("week", "Відобразити навчальний тиждень"),
             BotCommand("help", "Список команд"),
         ])
 

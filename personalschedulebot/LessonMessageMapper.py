@@ -30,11 +30,12 @@ time_array = {
 
 
 def generate_telegram_message_from_list(lessons: List[Lesson], date: datetime, week_number: int) -> str:
-    result: str = f'<b>Розклад на {date.strftime("%d")} {months_array[date.strftime("%d")]}</b>\n'
+    result: str = f'<b>Розклад на {date.strftime("%d")} {months_array[date.strftime("%m")]}</b>\n'
     result += f'<b>{date.strftime("%A").capitalize()}</b>, {str(week_number)} тиждень\n\n'
     if not len(lessons):
         return result + f'Протягом дня заняття відсутні! 🥳'
     result += '\n\n'.join([generate_telegram_message(lesson) for lesson in lessons])
+    #result += '\n\n• • • • • • • • • • • • • • • • • • •\n🤖 Надіслано ботом @schedulekai_bot'
     return result
 
 def generate_telegram_message(lesson: Lesson) -> str:
