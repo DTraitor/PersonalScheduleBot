@@ -10,8 +10,15 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl build-essential gcc \
-    && rm -rf /var/lib/apt/lists/*
+    curl build-essential gcc locales \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "uk_UA.UTF-8 UTF-8" >> /etc/locale.gen \
+    && locale-gen \
+    && update-locale LANG=uk_UA.UTF-8
+
+ENV LANG=uk_UA.UTF-8 \
+    LANGUAGE=uk_UA:uk \
+    LC_ALL=uk_UA.UTF-8
 
 # Install Poetry
 RUN curl -sSL https://install.python-poetry.org | python3 -
