@@ -13,7 +13,7 @@ SCHEDULE_API = os.environ["SCHEDULE_API"]
 
 
 def make_api_get_request(url_path: str, params: dict) -> httpx.Response:
-    return httpx.get(SCHEDULE_API + url_path, params=params, timeout=15.0)
+    return httpx.get(SCHEDULE_API + url_path, params=params, timeout=70.0)
 
 
 def make_api_post_request(url_path: str, params: dict, content: dict) -> httpx.Response:
@@ -22,7 +22,7 @@ def make_api_post_request(url_path: str, params: dict, content: dict) -> httpx.R
         params=params,
         headers={"Content-Type": "application/json"},
         content=json.dumps(content),
-        timeout=15.0)
+        timeout=70.0)
 
 
 def make_api_patch_request(url_path: str, params: dict, content: dict) -> httpx.Response:
@@ -31,11 +31,11 @@ def make_api_patch_request(url_path: str, params: dict, content: dict) -> httpx.
         params=params,
         headers={"Content-Type": "application/json"},
         content=json.dumps(content),
-        timeout=15.0)
+        timeout=70.0)
 
 
 def make_api_delete_request(url_path: str, params: dict) -> httpx.Response:
-    return httpx.delete(SCHEDULE_API + url_path, params=params, timeout=15.0)
+    return httpx.delete(SCHEDULE_API + url_path, params=params, timeout=70.0)
 
 
 def get_schedule(
