@@ -628,7 +628,7 @@ def main() -> None:
             BotCommand("help", "Список команд"),
         ])
 
-    application.job_queue.run_repeating(alert_users, interval=30, first=30)
+    #application.job_queue.run_repeating(alert_users, interval=30, first=30)
     application.post_init = post_init
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
