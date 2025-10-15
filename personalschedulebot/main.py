@@ -122,7 +122,6 @@ async def ask_for_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def manual_group_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not is_private(update):
-        await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
         return
 
     if context.user_data.get(EXPECTING_MANUAL_GROUP):
