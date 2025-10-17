@@ -36,7 +36,6 @@ from personalschedulebot.ScheduleAPI import (
     delete_user_elective_lessons, get_user_alerts,
 )
 from personalschedulebot.ElectiveLesson import ElectiveLesson
-from personalschedulebot.ElectiveLessonDay import ElectiveLessonDay
 from personalschedulebot.UserAlert import UserAlert, UserAlertType
 
 # Enable logging
@@ -128,8 +127,8 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
         group_code = update.message.text.strip()
         tg_id = update.message.from_user.id
 
-        if user_exists(tg_id):
-            result = change_user_group(tg_id, group_code)
+        if await user_exists(tg_id):
+            result = await change_user_group(tg_id, group_code)
             if result == 0:
                 await update.message.reply_html(f"Група змінена на <b>{group_code}</b>.")
             elif result == 1:
@@ -137,7 +136,7 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
             else:
                 await update.message.reply_text("Не вдалося змінити групу.\nЗверніться у підтримку @kaidigital_bot.")
         else:
-            result = create_user(tg_id, group_code)
+            result = await create_user(tg_id, group_code)
             if result == 0:
                 await update.message.reply_html(
                     f"Група встановлена: <b>{group_code}</b>.\n\nВикористайте /schedule щоб отримати розклад.\nВикористайте /elective_add для додавання вибіркових дисциплін."
@@ -167,7 +166,7 @@ async def render_schedule(update_or_query, context: ContextTypes.DEFAULT_TYPE, t
     """General function to get schedule, apply timezone, render, and send UTC datetime."""
     tg_id = update_or_query.from_user.id if from_callback else update_or_query.message.from_user.id
 
-    if not user_exists(tg_id):
+    if not await user_exists(tg_id):
         if not from_callback:
             await update_or_query.message.reply_html("Ви ще не вибрали групу.")
             await ask_for_group(update_or_query, context)
@@ -179,7 +178,7 @@ async def render_schedule(update_or_query, context: ContextTypes.DEFAULT_TYPE, t
         target_date = datetime.now(tz=user_tz)
 
     # Fetch lessons (API expects naive datetime)
-    lessons = get_schedule(target_date, tg_id)
+    lessons = await get_schedule(target_date, tg_id)
     lessons.sort(key=lambda l: l.begin_time)
 
     text = generate_telegram_message_from_list(lessons, target_date, week_parity(target_date.year, target_date.date()))
@@ -283,11 +282,11 @@ async def elective_add_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
         return
     tg_id = update.message.from_user.id
-    if not user_exists(tg_id):
+    if not await user_exists(tg_id):
         await update.message.reply_html("Ви ще не вибрали групу. Використайте /start щоб встановити групу.")
         return
 
-    possible_days = get_possible_days()  # List[ElectiveLessonDay]
+    possible_days = await get_possible_days()  # List[ElectiveLessonDay]
     if not possible_days:
         await update.message.reply_text("Немає доступних дат для вибору вибіркових пар.")
         return
@@ -300,7 +299,7 @@ async def elective_add_command(update: Update, context: ContextTypes.DEFAULT_TYP
 async def handle_elective_week_selected(query, context: ContextTypes.DEFAULT_TYPE, week_num: int) -> None:
     """After week selection show days of week available for that week."""
     # get days filtered by week
-    days = [d for d in get_possible_days() if d.week_number == week_num]
+    days = [d for d in await get_possible_days() if d.week_number == week_num]
     if not days:
         await query.edit_message_text("Немає днів для цього тижня.")
         return
@@ -318,7 +317,7 @@ async def handle_elective_week_selected(query, context: ContextTypes.DEFAULT_TYP
 
 async def handle_elective_day_selected(query, context: ContextTypes.DEFAULT_TYPE, week_num: int, day_of_week: int) -> None:
     """After day selection show available times (ElectiveLessonDay.begin_time) for chosen week/day."""
-    possible = [d for d in get_possible_days() if d.week_number == week_num and d.day_of_week == day_of_week]
+    possible = [d for d in await get_possible_days() if d.week_number == week_num and d.day_of_week == day_of_week]
     if not possible:
         await query.edit_message_text("Немає доступних часів для цього дня.")
         return
@@ -337,7 +336,7 @@ async def handle_elective_day_selected(query, context: ContextTypes.DEFAULT_TYPE
 async def handle_elective_time_selected(query, context: ContextTypes.DEFAULT_TYPE, elective_day_id: int) -> None:
     """After time selected: store elective_day_id and ask user to type partial lesson name."""
     # verify elective_day_id exists
-    possible = [d for d in get_possible_days() if d.id == elective_day_id]
+    possible = [d for d in await get_possible_days() if d.id == elective_day_id]
     if not possible:
         await query.edit_message_text("Обраний час недоступний.")
         return
@@ -360,7 +359,7 @@ async def handle_elective_partial_name_input(update: Update, context: ContextTyp
         context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
         return
 
-    results = get_possible_lessons(elective_day_id, partial)  # List[ElectiveLesson]
+    results = await get_possible_lessons(elective_day_id, partial)  # List[ElectiveLesson]
     if results is None:
         await update.message.reply_text("Помилка при зверненні до API. Спробуйте пізніше.")
         context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
@@ -389,7 +388,7 @@ async def handle_elective_choice_selected(query, context: ContextTypes.DEFAULT_T
     """User selected one of the returned elective lessons — create user elective, replace buttons with confirmation."""
     tg_id = query.from_user.id
     # call API to create
-    ok = create_user_elective_lesson(tg_id, lesson_id)
+    ok = await create_user_elective_lesson(tg_id, lesson_id)
     if not ok:
         await query.edit_message_text("Не вдалося додати предмет. Спробуйте пізніше.")
         context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
@@ -413,11 +412,11 @@ async def elective_list_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
         return
     tg_id = update.message.from_user.id
-    if not user_exists(tg_id):
+    if not await user_exists(tg_id):
         await update.message.reply_html("Ви ще не вибрали групу. Використайте /start щоб встановити групу.")
         return
 
-    lessons = get_user_elective_lessons(tg_id)  # List[ElectiveLesson]
+    lessons = await get_user_elective_lessons(tg_id)  # List[ElectiveLesson]
     if not lessons:
         await update.message.reply_text("У вас ще немає доданих вибіркових пар.")
         return
@@ -483,7 +482,7 @@ async def handle_elective_view(query, context: ContextTypes.DEFAULT_TYPE, lesson
     if not chosen:
         # reload
         tg_id = query.from_user.id
-        lessons = get_user_elective_lessons(tg_id)
+        lessons = await get_user_elective_lessons(tg_id)
         context.user_data["__elective_cached"] = lessons
         for l in lessons:
             if l.id == lesson_id:
@@ -523,13 +522,13 @@ async def handle_elective_view(query, context: ContextTypes.DEFAULT_TYPE, lesson
 
 async def handle_elective_remove(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int) -> None:
     tg_id = query.from_user.id
-    ok = delete_user_elective_lessons(tg_id, lesson_id)
+    ok = await delete_user_elective_lessons(tg_id, lesson_id)
     if not ok:
         await query.answer("Не вдалося видалити. Спробуйте пізніше.", show_alert=True)
         return
 
     # refresh cache
-    lessons = get_user_elective_lessons(tg_id)
+    lessons = await get_user_elective_lessons(tg_id)
     context.user_data["__elective_cached"] = lessons
 
     await query.edit_message_text("✅ Предмет видалено з ваших вибіркових пар.")
@@ -553,7 +552,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def alert_users(context: ContextTypes.DEFAULT_TYPE) -> None:
     alert: UserAlert
-    for alert in get_user_alerts(100):
+    for alert in await get_user_alerts(100):
         match alert.alert_type:
             case UserAlertType.GROUP_REMOVED:
                 msg = generate_group_deleted_message(alert)
