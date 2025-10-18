@@ -553,15 +553,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def alert_users(context: ContextTypes.DEFAULT_TYPE) -> None:
     alert: UserAlert
     for alert in await get_user_alerts(100):
-        match alert.alert_type:
-            case UserAlertType.GROUP_REMOVED:
-                msg = generate_group_deleted_message(alert)
-                await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
-            case UserAlertType.ELECTIVE_LESSON_REMOVED:
-                msg = generate_elective_deleted_message(alert)
-                await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
-            case _:
-                continue
+        try:
+            match alert.alert_type:
+                case UserAlertType.GROUP_REMOVED:
+                    msg = generate_group_deleted_message(alert)
+                    await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
+                case UserAlertType.ELECTIVE_LESSON_REMOVED:
+                    msg = generate_elective_deleted_message(alert)
+                    await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
+                case _:
+                    continue
+        except:
+            pass
 
 
 def generate_group_deleted_message(alert: UserAlert) -> str:
