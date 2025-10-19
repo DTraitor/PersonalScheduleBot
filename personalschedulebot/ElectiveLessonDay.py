@@ -1,15 +1,13 @@
-from datetime import time, datetime
+from typing import List
+
+from personalschedulebot.ElectiveLessonDaySpecific import ElectiveLessonDaySpecific
 
 
 class ElectiveLessonDay:
-    __slots__ = ["id", "week_number", "day_of_week", "begin_time"]
-    id: int
-    week_number: int
-    day_of_week: int
-    begin_time: time
+    __slots__ = ["source_id", "lesson_days"]
+    source_id: int
+    lesson_days: List[ElectiveLessonDaySpecific]
 
     def __init__(self, data: dict):
-        self.id = data["id"]
-        self.week_number = int(data["weekNumber"])
-        self.day_of_week = int(data["dayOfWeek"])
-        self.begin_time = datetime.strptime(data["startTime"], "%H:%M:%S").time()
+        self.source_id = data["sourceId"]
+        self.lesson_days = [ElectiveLessonDaySpecific(ld) for ld in data["lessonDays"]]
