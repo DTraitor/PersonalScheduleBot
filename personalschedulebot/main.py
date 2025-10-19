@@ -28,14 +28,16 @@ from personalschedulebot.ScheduleAPI import (
     user_exists,
     create_user,
     change_user_group,
-    # elective API functions
-    get_possible_days,
+    get_user_alerts,
     get_possible_lessons,
+    get_possible_subgroups,
+    get_possible_days,
     get_user_elective_lessons,
-    create_user_elective_lesson,
-    delete_user_elective_lessons, get_user_alerts,
+    create_user_elective_entry,
+    create_user_elective_source,
+    delete_user_elective_entry,
+    delete_user_elective_source,
 )
-from personalschedulebot.ElectiveLesson import ElectiveLesson
 from personalschedulebot.UserAlert import UserAlert, UserAlertType
 
 # Enable logging
@@ -46,14 +48,15 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("apscheduler.executors.default").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-EXPECTING_MANUAL_GROUP = "expecting_manual_group"  # flag in user_data
+EXPECTING_MANUAL_GROUP = "expecting_manual_group"
 
 # Elective flow state keys
-EXPECTING_ELECTIVE_NAME = "expecting_elective_name"  # waiting for user to type partial lesson name
-TEMP_ELECTIVE_DAY_ID = "temp_elective_day_id"  # selected ElectiveLessonDay.id
+EXPECTING_ELECTIVE_NAME = "expecting_elective_name"
+TEMP_ELECTIVE_LESSON_ID = "temp_elective_lesson_id"
+TEMP_ELECTIVE_ADD_METHOD = "temp_elective_add_method"  # "subgroup" or "manual"
+TEMP_ELECTIVE_LESSON_TYPE = "temp_elective_lesson_type"
 TEMP_ELECTIVE_WEEK = "temp_elective_week"
 TEMP_ELECTIVE_DAY = "temp_elective_day"
-ELECTIVE_PAGE = "elective_page"  # current page in list view
 
 # Constants
 ELECTIVE_PAGE_SIZE = 9
@@ -65,8 +68,6 @@ def week_parity(reference_year: int, check_date: date = None) -> int:
     if check_date is None:
         check_date = date.today()
     sept1 = date(reference_year, 9, 1)
-    #if check_date < sept1:
-    #    raise ValueError("check_date must not be before September 1 of the given year")
     weeks = (check_date - sept1).days // 7
     return 1 if weeks % 2 == 0 else 2
 
@@ -80,6 +81,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     welcome_message += '\n• /change_group - обрання своєї групи'
     welcome_message += '\n• /elective_add - додавання вибіркових'
+    welcome_message += '\n• /elective_list - перегляд своїх вибіркових'
     welcome_message += '\n• /schedule - перегляд розкладу'
 
     welcome_message += '\n\nУ разі виникнення проблем, звертайся до @kaidigital_bot'
@@ -149,7 +151,7 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
         context.user_data.pop(EXPECTING_MANUAL_GROUP, None)
         return
 
-    # fallback: maybe user typing partial elective name
+    # fallback: maybe user typing elective name
     if context.user_data.get(EXPECTING_ELECTIVE_NAME):
         await handle_elective_partial_name_input(update, context)
         return
@@ -174,7 +176,7 @@ async def render_schedule(update_or_query, context: ContextTypes.DEFAULT_TYPE, t
 
     # Use current date if not provided
     if target_date is None:
-        user_tz = ZoneInfo("Europe/Kyiv")  # Replace with user-specific TZ if available
+        user_tz = ZoneInfo("Europe/Kyiv")
         target_date = datetime.now(tz=user_tz)
 
     # Fetch lessons (API expects naive datetime)
@@ -234,50 +236,78 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     # Elective callbacks start with EL_
-    if parts[0] == "EL_WEEK":  # parts: EL_WEEK|<weekNumber>
-        week_num = int(parts[1])
-        await handle_elective_week_selected(query, context, week_num)
-        return
-
-    if parts[0] == "EL_DAY":  # parts: EL_DAY|<weekNumber>|<dayOfWeek>
-        week_num = int(parts[1])
-        day_of_week = int(parts[2])
-        await handle_elective_day_selected(query, context, week_num, day_of_week)
-        return
-
-    if parts[0] == "EL_TIME":  # parts: EL_TIME|<electiveDayId>
-        elective_day_id = int(parts[1])
-        await handle_elective_time_selected(query, context, elective_day_id)
-        return
-
-    if parts[0] == "EL_CHOICE":  # parts: EL_CHOICE|<lessonId>
+    if parts[0] == "EL_LESSON":  # parts: EL_LESSON|<lessonId>
         lesson_id = int(parts[1])
-        await handle_elective_choice_selected(query, context, lesson_id)
+        await handle_elective_lesson_selected(query, context, lesson_id)
         return
 
-    if parts[0] == "EL_LISTPAGE":  # parts: EL_LISTPAGE|<page>
-        page = int(parts[1])
-        await handle_elective_list_page(query, context, page)
-        return
-
-    if parts[0] == "EL_VIEW":  # parts: EL_VIEW|<lessonId>|<page>
+    if parts[0] == "EL_METHOD":  # parts: EL_METHOD|<lessonId>|<method>
         lesson_id = int(parts[1])
-        page = int(parts[2])
-        await handle_elective_view(query, context, lesson_id, page)
+        method = parts[2]  # "subgroup" or "manual"
+        await handle_elective_method_selected(query, context, lesson_id, method)
         return
 
-    if parts[0] == "EL_REMOVE":  # parts: EL_REMOVE|<lessonId>
+    if parts[0] == "EL_SUBGROUP_TYPE":  # parts: EL_SUBGROUP_TYPE|<lessonId>|<type>
         lesson_id = int(parts[1])
-        await handle_elective_remove(query, context, lesson_id)
+        lesson_type = parts[2]
+        await handle_elective_subgroup_type_selected(query, context, lesson_id, lesson_type)
+        return
+
+    if parts[0] == "EL_SUBGROUP":  # parts: EL_SUBGROUP|<lessonId>|<type>|<subgroup>
+        lesson_id = int(parts[1])
+        lesson_type = parts[2]
+        subgroup = int(parts[3])
+        await handle_elective_subgroup_selected(query, context, lesson_id, lesson_type, subgroup)
+        return
+
+    if parts[0] == "EL_MANUAL_TYPE":  # parts: EL_MANUAL_TYPE|<lessonId>|<type>
+        lesson_id = int(parts[1])
+        lesson_type = parts[2]
+        await handle_elective_manual_type_selected(query, context, lesson_id, lesson_type)
+        return
+
+    if parts[0] == "EL_MANUAL_WEEK":  # parts: EL_MANUAL_WEEK|<lessonId>|<type>|<week>
+        lesson_id = int(parts[1])
+        lesson_type = parts[2]
+        week = parts[3] == 'True'
+        await handle_elective_manual_week_selected(query, context, lesson_id, lesson_type, week)
+        return
+
+    if parts[0] == "EL_MANUAL_DAY":  # parts: EL_MANUAL_DAY|<lessonId>|<type>|<week>|<day>
+        lesson_id = int(parts[1])
+        lesson_type = parts[2]
+        week = parts[3] == 'True'
+        day = int(parts[4])
+        await handle_elective_manual_day_selected(query, context, lesson_id, lesson_type, week, day)
+        return
+
+    if parts[0] == "EL_MANUAL_TIME":  # parts: EL_MANUAL_TIME|<lessonId>|<type>|<week>|<day>|<time>
+        lesson_id = int(parts[1])
+        lesson_type = parts[2]
+        week = parts[3] == 'True'
+        day = int(parts[4])
+        entry_id = int(parts[5])
+        await handle_elective_manual_time_selected(query, context, lesson_id, lesson_type, week, day, entry_id)
+        return
+
+    if parts[0] == "EL_LIST":  # parts: EL_LIST
+        await handle_elective_list_view(query, context)
+        return
+
+    if parts[0] == "EL_REMOVE":  # parts: EL_REMOVE|<source|entry>|<id>
+        remove_type = parts[1]  # "source" or "entry"
+        item_id = int(parts[2])
+        await handle_elective_remove(query, context, remove_type, item_id)
         return
 
     # Unknown callback: ignore
     return
 
+
 # ---------- Elective flow handlers ----------
 
 async def elective_add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Start adding elective: present weeks available."""
+    """Start adding elective: ask user to input lesson name."""
     if not is_private(update):
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
         return
@@ -286,128 +316,262 @@ async def elective_add_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_html("Ви ще не вибрали групу. Використайте /start щоб встановити групу.")
         return
 
-    possible_days = await get_possible_days()  # List[ElectiveLessonDay]
-    if not possible_days:
-        await update.message.reply_text("Немає доступних дат для вибору вибіркових пар.")
-        return
-
-    weeks = sorted({d.week_number for d in possible_days})
-    kb = [[InlineKeyboardButton(f"Тиждень {w+1}", callback_data=f"EL_WEEK|{w}") ] for w in weeks]
-    await update.message.reply_text("Оберіть номер тижня:", reply_markup=InlineKeyboardMarkup(kb))
-
-
-async def handle_elective_week_selected(query, context: ContextTypes.DEFAULT_TYPE, week_num: int) -> None:
-    """After week selection show days of week available for that week."""
-    # get days filtered by week
-    days = [d for d in await get_possible_days() if d.week_number == week_num]
-    if not days:
-        await query.edit_message_text("Немає днів для цього тижня.")
-        return
-
-    # unique day_of_week values with representative begin_time(s)
-    day_numbers = sorted({d.day_of_week for d in days})
-    kb = []
-    for dn in day_numbers:
-        # show day number
-        rep = next((d for d in days if d.day_of_week == dn), None)
-        label = f"{calendar.day_name[dn-1]}" if rep else str(dn)
-        kb.append([InlineKeyboardButton(label, callback_data=f"EL_DAY|{week_num}|{dn}")])
-    await query.edit_message_text(f"Тиждень {week_num+1} — оберіть день тижня:", reply_markup=InlineKeyboardMarkup(kb))
-
-
-async def handle_elective_day_selected(query, context: ContextTypes.DEFAULT_TYPE, week_num: int, day_of_week: int) -> None:
-    """After day selection show available times (ElectiveLessonDay.begin_time) for chosen week/day."""
-    possible = [d for d in await get_possible_days() if d.week_number == week_num and d.day_of_week == day_of_week]
-    if not possible:
-        await query.edit_message_text("Немає доступних часів для цього дня.")
-        return
-
-    kb = []
-    for d in sorted(possible, key=lambda x: x.begin_time):
-        kb.append([InlineKeyboardButton(d.begin_time.strftime("%H:%M"), callback_data=f"EL_TIME|{d.id}")])
-
-    # keep chosen week/day in user_data for convenience
-    context.user_data[TEMP_ELECTIVE_WEEK] = week_num
-    context.user_data[TEMP_ELECTIVE_DAY] = day_of_week
-
-    await query.edit_message_text("Оберіть час:", reply_markup=InlineKeyboardMarkup(kb))
-
-
-async def handle_elective_time_selected(query, context: ContextTypes.DEFAULT_TYPE, elective_day_id: int) -> None:
-    """After time selected: store elective_day_id and ask user to type partial lesson name."""
-    # verify elective_day_id exists
-    possible = [d for d in await get_possible_days() if d.id == elective_day_id]
-    if not possible:
-        await query.edit_message_text("Обраний час недоступний.")
-        return
-
-    context.user_data[TEMP_ELECTIVE_DAY_ID] = elective_day_id
     context.user_data[EXPECTING_ELECTIVE_NAME] = True
-
-    # ask user to type partial lesson name using ForceReply so they can type it
-    await query.edit_message_text("Введіть частину назви предмета (наприклад, 'матем'):", reply_markup=None)
+    text = "Введіть назву або частину назви вибіркового предмета:"
+    await update.message.reply_html(text, reply_markup=ForceReply(selective=True))
 
 
 async def handle_elective_partial_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """User typed partial lesson name — query API and show matching results (or ask to refine)."""
+    """User typed lesson name — query API and show matching results."""
     if not context.user_data.get(EXPECTING_ELECTIVE_NAME):
         return
+
     partial = update.message.text.strip()
-    elective_day_id = context.user_data.get(TEMP_ELECTIVE_DAY_ID)
-    if elective_day_id is None:
-        await update.message.reply_text("Не вибрано дату/час. Розпочніть спочатку командою /elective_add.")
-        context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
-        return
+    context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
 
-    results = await get_possible_lessons(elective_day_id, partial)  # List[ElectiveLesson]
-    if results is None:
+    try:
+        results = await get_possible_lessons(partial)
+    except ValueError:
+        await update.message.reply_text("❌ Невірна назва. Будь ласка, введіть більш точну назву предмета:")
+        context.user_data[EXPECTING_ELECTIVE_NAME] = True
+        return
+    except Exception as e:
         await update.message.reply_text("Помилка при зверненні до API. Спробуйте пізніше.")
-        context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
+        logger.error(f"Error fetching lessons: {e}")
         return
 
-    if len(results) == 0:
-        await update.message.reply_text("За вказаною частиною нічого не знайдено. Спробуйте інший запит.")
+    if not results:
+        await update.message.reply_text("За вказаною назвою нічого не знайдено. Спробуйте інший запит:")
+        context.user_data[EXPECTING_ELECTIVE_NAME] = True
         return
 
-    if len(results) > 10:
-        await update.message.reply_text("Знайдено більш ніж 10 збігів — введіть більш конкретну частину назви.")
-        return
-
-    # show results as column of inline buttons: "{LessonName} | {LessonType}"
+    # Store lessons in temp data and show results as inline buttons
+    context.user_data["temp_elective_lessons"] = {lesson.source_id: lesson for lesson in results}
     kb = []
-    for r in results:
-        label_type = r.lesson_type if r.lesson_type else "-"
-        label = f"{label_type} | {r.title}"
-        kb.append([InlineKeyboardButton(label[:64], callback_data=f"EL_CHOICE|{r.id}")])  # truncate label if too long
+    for lesson in results:
+        label = f"{lesson.title}"
+        kb.append([InlineKeyboardButton(label[:64], callback_data=f"EL_LESSON|{lesson.source_id}")])
 
     await update.message.reply_text("Оберіть предмет зі списку:", reply_markup=InlineKeyboardMarkup(kb))
-    # leave EXPECTING_ELECTIVE_NAME until user chooses (or timeout/other action clears it)
 
 
-async def handle_elective_choice_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int) -> None:
-    """User selected one of the returned elective lessons — create user elective, replace buttons with confirmation."""
-    tg_id = query.from_user.id
-    # call API to create
-    ok = await create_user_elective_lesson(tg_id, lesson_id)
-    if not ok:
-        await query.edit_message_text("Не вдалося додати предмет. Спробуйте пізніше.")
-        context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
-        context.user_data.pop(TEMP_ELECTIVE_DAY_ID, None)
+async def handle_elective_lesson_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int) -> None:
+    """User selected a lesson — check if subgroup adding is possible."""
+    context.user_data[TEMP_ELECTIVE_LESSON_ID] = lesson_id
+
+    # Get lesson from cached results
+    lessons = context.user_data.get("temp_elective_lessons", {})
+    lesson = lessons.get(lesson_id)
+
+    if not lesson:
+        await query.edit_message_text("❌ Інформація про предмет не знайдена.")
         return
 
-    # success — show confirmation with a single button to remove it (so user can remove immediately if accidental)
-    await query.edit_message_text("✅ Предмет успішно додано до ваших вибіркових пар.", reply_markup=None)
+    # Store lesson types for later use
+    context.user_data["temp_elective_lesson_types"] = lesson.types
+
+    has_subgroup = False
+    # Check if any type has subgroups other than -1
+    for lesson_type in lesson.types:
+        try:
+            subgroups = await get_possible_subgroups(lesson_id, lesson_type)
+            if any(sg != -1 for sg in subgroups.possible_subgroups):
+                has_subgroup = True
+                break
+        except Exception:
+            pass
+
+    if not has_subgroup:
+        # Only manual adding is possible
+        await query.edit_message_text(
+            "❌ Цей предмет можна додати тільки вручну.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Додати вручну", callback_data=f"EL_METHOD|{lesson_id}|manual")
+            ]])
+        )
+    else:
+        # Show both options
+        kb = [[
+            InlineKeyboardButton("За потоком (рекомендується)", callback_data=f"EL_METHOD|{lesson_id}|subgroup")
+        ], [
+            InlineKeyboardButton("Вручну", callback_data=f"EL_METHOD|{lesson_id}|manual")
+        ]]
+        await query.edit_message_text("Як додати предмет?", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_method_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int, method: str) -> None:
+    """User selected adding method (subgroup or manual)."""
+    context.user_data[TEMP_ELECTIVE_ADD_METHOD] = method
+
+    if method == "subgroup":
+        await handle_elective_subgroup_flow_start(query, context, lesson_id)
+    else:
+        await handle_elective_manual_flow_start(query, context, lesson_id)
+
+
+async def handle_elective_subgroup_flow_start(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int) -> None:
+    """Start subgroup adding flow — ask user to select lesson type."""
+    # Get lesson types from stored data
+    lesson_types = context.user_data.get("temp_elective_lesson_types", [])
+
+    if not lesson_types:
+        await query.edit_message_text("❌ Не вдалося отримати типи заняття.")
+        return
+
+    kb = [[InlineKeyboardButton(t.capitalize(), callback_data=f"EL_SUBGROUP_TYPE|{lesson_id}|{t}")] for t in lesson_types]
+    await query.edit_message_text("Оберіть тип заняття:", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_subgroup_type_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int, lesson_type: str) -> None:
+    """User selected lesson type for subgroup adding — show available subgroups."""
+    try:
+        subgroups_obj = await get_possible_subgroups(lesson_id, lesson_type)
+        subgroups = [sg for sg in subgroups_obj.possible_subgroups if sg != -1]
+    except Exception as e:
+        await query.edit_message_text("❌ Для цього типу заняття немає доступних потоків.")
+        logger.error(f"Error fetching subgroups: {e}")
+        return
+
+    if not subgroups:
+        await query.edit_message_text("❌ Для цього типу заняття немає доступних потоків.")
+        return
+
+    kb = [[InlineKeyboardButton(f"Потік {sg}", callback_data=f"EL_SUBGROUP|{lesson_id}|{lesson_type}|{sg}")] for sg in sorted(subgroups)]
+    await query.edit_message_text("Оберіть потік:", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_subgroup_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int, lesson_type: str, subgroup: int) -> None:
+    """User selected subgroup — create elective entry."""
+    tg_id = query.from_user.id
+
+    try:
+        ok = await create_user_elective_source(tg_id, lesson_id, lesson_type, subgroup)
+        if ok:
+            await query.edit_message_text("✅ Предмет успішно додано до ваших вибіркових пар.")
+        else:
+            await query.edit_message_text("❌ Не вдалося додати предмет. Спробуйте пізніше.")
+    except Exception as e:
+        await query.edit_message_text("❌ Помилка при додаванні предмета.")
+        logger.error(f"Error creating elective entry: {e}")
+
     # cleanup
-    context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
-    context.user_data.pop(TEMP_ELECTIVE_DAY_ID, None)
+    context.user_data.pop(TEMP_ELECTIVE_LESSON_ID, None)
+    context.user_data.pop(TEMP_ELECTIVE_ADD_METHOD, None)
+
+
+async def handle_elective_manual_flow_start(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int) -> None:
+    """Start manual adding flow — ask user to select lesson type."""
+    lesson_types = context.user_data.get("temp_elective_lesson_types", [])
+
+    if not lesson_types:
+        await query.edit_message_text("❌ Не вдалося отримати типи заняття.")
+        return
+
+    kb = [[InlineKeyboardButton(t.capitalize(), callback_data=f"EL_MANUAL_TYPE|{lesson_id}|{t}")] for t in lesson_types]
+    await query.edit_message_text("Оберіть тип заняття:", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_manual_type_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int, lesson_type: str) -> None:
+    """User selected lesson type for manual adding — show available weeks."""
+    context.user_data[TEMP_ELECTIVE_LESSON_TYPE] = lesson_type
+
+    try:
+        days_obj = await get_possible_days(lesson_id)
+        weeks = sorted(set(day.week_number for day in days_obj.lesson_days if day.type == lesson_type))
+    except Exception as e:
+        await query.edit_message_text("❌ Не вдалося отримати доступні тижні.")
+        logger.error(f"Error fetching days: {e}")
+        return
+
+    if not weeks:
+        await query.edit_message_text("❌ Для цього типу заняття немає доступних тижнів.")
+        return
+
+    kb = [[InlineKeyboardButton(f"Тиждень {w + 1}", callback_data=f"EL_MANUAL_WEEK|{lesson_id}|{lesson_type}|{w}")] for w in weeks]
+    await query.edit_message_text("Оберіть тиждень:", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_manual_week_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int, lesson_type: str, week: bool) -> None:
+    """User selected week — show available days."""
+    context.user_data[TEMP_ELECTIVE_WEEK] = week
+
+    try:
+        days_obj = await get_possible_days(lesson_id)
+        days = sorted(
+            set(day.day_of_week for day in days_obj.lesson_days if day.type == lesson_type and day.week_number == week)
+        )
+    except Exception as e:
+        await query.edit_message_text("❌ Не вдалося отримати доступні дні.")
+        logger.error(f"Error fetching days: {e}")
+        return
+
+    if not days:
+        await query.edit_message_text("❌ Для цього тижня немає доступних днів.")
+        return
+
+    kb = []
+    for day in days:
+        day_name = calendar.day_name[day - 1].capitalize() if 1 <= day <= 7 else str(day)
+        kb.append([InlineKeyboardButton(day_name, callback_data=f"EL_MANUAL_DAY|{lesson_id}|{lesson_type}|{week}|{day}")])
+
+    await query.edit_message_text("Оберіть день тижня:", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_manual_day_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int, lesson_type: str, week: bool, day: int) -> None:
+    """User selected day — show available lesson times to choose from."""
+    context.user_data[TEMP_ELECTIVE_WEEK] = week
+    context.user_data[TEMP_ELECTIVE_DAY] = day
+
+    try:
+        days_obj = await get_possible_days(lesson_id)
+        # Filter by lesson type, week, and day
+        matching_days = [
+            d for d in days_obj.lesson_days
+            if d.type == lesson_type and d.week_number == week and d.day_of_week == day
+        ]
+    except Exception as e:
+        await query.edit_message_text("❌ Не вдалося отримати доступні часи.")
+        logger.error(f"Error fetching days: {e}")
+        return
+
+    if not matching_days:
+        await query.edit_message_text("❌ Для цього дня немає доступних часів.")
+        return
+
+    kb = []
+    for day_slot in sorted(matching_days, key=lambda x: x.start_time):
+        label = f"{day_slot.start_time.strftime('%H:%M')}"
+        kb.append([InlineKeyboardButton(label, callback_data=f"EL_MANUAL_TIME|{lesson_id}|{lesson_type}|{week}|{day}|{day_slot.id}")])
+
+    await query.edit_message_text("Оберіть час заняття:", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_manual_time_selected(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int, lesson_type: str, week: int, day: int, entry_id: int) -> None:
+    """User selected time — create elective entry."""
+    tg_id = query.from_user.id
+
+    try:
+        ok = await create_user_elective_entry(tg_id, lesson_id, entry_id)
+        if ok:
+            await query.edit_message_text("✅ Предмет успішно додано до ваших вибіркових пар.")
+        else:
+            await query.edit_message_text("❌ Не вдалося додати предмет. Спробуйте пізніше.")
+    except Exception as e:
+        await query.edit_message_text("❌ Помилка при додаванні предмета.")
+        logger.error(f"Error creating elective entry: {e}")
+
+    # cleanup
+    context.user_data.pop(TEMP_ELECTIVE_LESSON_ID, None)
+    context.user_data.pop(TEMP_ELECTIVE_ADD_METHOD, None)
+    context.user_data.pop(TEMP_ELECTIVE_LESSON_TYPE, None)
     context.user_data.pop(TEMP_ELECTIVE_WEEK, None)
     context.user_data.pop(TEMP_ELECTIVE_DAY, None)
+    context.user_data.pop("temp_elective_lesson_types", None)
+    context.user_data.pop("temp_elective_lessons", None)
 
-
-# ---------- Viewing and removing user's electives ----------
 
 async def elective_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show paginated list of user's elective lessons (9 per page)."""
+    """Show user's elective lessons."""
     if not is_private(update):
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
         return
@@ -416,124 +580,77 @@ async def elective_list_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_html("Ви ще не вибрали групу. Використайте /start щоб встановити групу.")
         return
 
-    lessons = await get_user_elective_lessons(tg_id)  # List[ElectiveLesson]
-    if not lessons:
-        await update.message.reply_text("У вас ще немає доданих вибіркових пар.")
+    await handle_elective_list_view(update, update.message.from_user.id, context)
+
+
+async def handle_elective_list_view(update_or_query, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display user's elective lessons with remove options."""
+    tg_id = user_id
+
+    try:
+        selected_lessons = await get_user_elective_lessons(tg_id)
+    except Exception as e:
+        msg = "❌ Помилка при отриманні списку вибіркових предметів."
+        if isinstance(update_or_query, Update) and update_or_query.message:
+            await update_or_query.message.reply_text(msg)
+        else:
+            await update_or_query.edit_message_text(msg)
+        logger.error(f"Error fetching user electives: {e}")
         return
 
-    # store lessons in user_data temporarily for paging (small list)
-    context.user_data["__elective_cached"] = lessons
-    context.user_data[ELECTIVE_PAGE] = 0
-    await display_elective_page(update, context, 0)
+    if not selected_lessons.sources and not selected_lessons.entries:
+        msg = "У вас ще немає доданих вибіркових пар."
+        if isinstance(update_or_query, Update) and update_or_query.message:
+            await update_or_query.message.reply_text(msg)
+        else:
+            await update_or_query.edit_message_text(msg)
+        return
 
-
-async def display_elective_page(update_or_query, context: ContextTypes.DEFAULT_TYPE, page: int) -> None:
-    lessons: List[ElectiveLesson] = context.user_data.get("__elective_cached", [])
-    total = len(lessons)
-    pages = (total + ELECTIVE_PAGE_SIZE - 1) // ELECTIVE_PAGE_SIZE
-    if page < 0 or page >= pages:
-        page = 0
-
-    start = page * ELECTIVE_PAGE_SIZE
-    end = min(start + ELECTIVE_PAGE_SIZE, total)
-    chunk = lessons[start:end]
+    text = "<b>Ваші вибіркові:</b>\n\n"
 
     kb = []
-    for l in chunk:
-        label = f"{l.week_number + 1} | {l.day_of_week + 1} | {l.title} | {l.lesson_type or '-'}"
-        kb.append([InlineKeyboardButton(label[:64], callback_data=f"EL_VIEW|{l.id}|{page}")])
 
-    # nav buttons
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️", callback_data=f"EL_LISTPAGE|{page-1}"))
-    nav.append(InlineKeyboardButton(f"{page+1}/{pages}", callback_data=f"EL_LISTPAGE|{page}"))
-    if page < pages-1:
-        nav.append(InlineKeyboardButton("▶️", callback_data=f"EL_LISTPAGE|{page+1}"))
-    kb.append(nav)
+    # entries (manual adding)
+    if selected_lessons.entries:
+        text += "<u>Додані вручну:</u>\n"
+        for src in selected_lessons.entries:
+            text += f"• {src.entry_name}\n"
+            kb.append([InlineKeyboardButton(f"❌ {src.entry_name[:50]}", callback_data=f"EL_REMOVE|entry|{src.selected_entry_id}")])
 
-    text_lines = [f"<b>Ваші вибіркові (сторінка {page+1}/{pages}):</b>\n"]
-    text = "\n".join(text_lines)
+    # sources (subgroup adding)
+    if selected_lessons.sources:
+        if selected_lessons.sources:
+            text += "\n"
+        text += "<u>Додані за потоком:</u>\n"
+        for entry in selected_lessons.sources:
+            text += f"• {entry.name} - потік {entry.subgroup_number}\n"
+            kb.append([InlineKeyboardButton(f"❌ {entry.name[:50]}", callback_data=f"EL_REMOVE|source|{entry.selected_source_id}")])
 
     if isinstance(update_or_query, Update) and update_or_query.message:
         await update_or_query.message.reply_html(text, reply_markup=InlineKeyboardMarkup(kb))
     else:
-        try:
-            await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
-        except Exception:
-            # fallback: send new message
-            await update_or_query.message.reply_html(text, reply_markup=InlineKeyboardMarkup(kb))
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 
-async def handle_elective_list_page(query, context: ContextTypes.DEFAULT_TYPE, page: int) -> None:
-    context.user_data[ELECTIVE_PAGE] = page
-    await display_elective_page(query, context, page)
-
-
-async def handle_elective_view(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int, page: int) -> None:
-    """Show detailed info about a single elective and provide remove option."""
-    lessons: List[ElectiveLesson] = context.user_data.get("__elective_cached", [])
-    chosen = None
-    # try find in cache; if not found, fetch all again
-    for l in lessons:
-        if l.id == lesson_id:
-            chosen = l
-            break
-    if not chosen:
-        # reload
-        tg_id = query.from_user.id
-        lessons = await get_user_elective_lessons(tg_id)
-        context.user_data["__elective_cached"] = lessons
-        for l in lessons:
-            if l.id == lesson_id:
-                chosen = l
-                break
-
-    if not chosen:
-        await query.edit_message_text("Інформація про предмет не знайдена.")
-        return
-
-    # build descriptive text
-    teacher = chosen.teacher[0] if len(chosen.teacher) > 0 else "-"
-    location = chosen.location or "-"
-    length_str = (datetime.combine(datetime.now(), chosen.begin_time) + chosen.duration).strftime("%H:%M")
-    text = (
-        f"<b>{chosen.title}</b>\n"
-        f"Тип: {chosen.lesson_type or '-'}\n"
-        f"Тиждень: {chosen.week_number + 1}\n"
-        f"День: {chosen.day_of_week + 1}\n"
-        f"Початок: {chosen.begin_time.strftime('%H:%M')}\n"
-        f"Кінець: {length_str}\n"
-        f"Викладач: {teacher}\n"
-        f"Місце: {location}\n"
-    )
-
-    kb = [
-        [InlineKeyboardButton("❌ Видалити", callback_data=f"EL_REMOVE|{chosen.id}")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data=f"EL_LISTPAGE|{page}")]
-    ]
+async def handle_elective_remove(query, context: ContextTypes.DEFAULT_TYPE, remove_type: str, item_id: int) -> None:
+    """Remove elective source or entry."""
+    tg_id = query.from_user.id
 
     try:
-        await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
-    except Exception:
-        # fallback: send message
-        await query.message.reply_html(text, reply_markup=InlineKeyboardMarkup(kb))
+        if remove_type == "source":
+            ok = await delete_user_elective_source(tg_id, item_id)
+        else:  # entry
+            ok = await delete_user_elective_entry(tg_id, item_id)
 
-
-async def handle_elective_remove(query, context: ContextTypes.DEFAULT_TYPE, lesson_id: int) -> None:
-    tg_id = query.from_user.id
-    ok = await delete_user_elective_lessons(tg_id, lesson_id)
-    if not ok:
-        await query.answer("Не вдалося видалити. Спробуйте пізніше.", show_alert=True)
-        return
-
-    # refresh cache
-    lessons = await get_user_elective_lessons(tg_id)
-    context.user_data["__elective_cached"] = lessons
-
-    await query.edit_message_text("✅ Предмет видалено з ваших вибіркових пар.")
-    # Optionally: after deletion offer to show list again
-    # await query.message.reply_text("Використайте /elective_list щоб переглянути оновлений список.")
+        if ok:
+            await query.answer("✅ Видалено", show_alert=False)
+            # Refresh the list
+            await handle_elective_list_view(query, query.from_user.id, context)
+        else:
+            await query.answer("❌ Не вдалося видалити. Спробуйте пізніше.", show_alert=True)
+    except Exception as e:
+        await query.answer("❌ Помилка при видаленні.", show_alert=True)
+        logger.error(f"Error removing elective: {e}")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -556,42 +673,48 @@ async def alert_users(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             match alert.alert_type:
                 case UserAlertType.GROUP_REMOVED:
-                    msg = generate_group_deleted_message(alert)
+                    msg = generate_group_removed_message(alert)
                     await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
-                case UserAlertType.ELECTIVE_LESSON_REMOVED:
-                    msg = generate_elective_deleted_message(alert)
+                case UserAlertType.SOURCE_REMOVED:
+                    msg = generate_source_removed_message(alert)
                     await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
+                case UserAlertType.ENTRY_REMOVED:
+                    msg = generate_entry_removed_message(alert)
+                    await context.bot.send_message(chat_id=alert.telegram_id, text=msg, parse_mode=ParseMode.HTML)
+                case UserAlertType.NEWS:
+                    await context.bot.send_message(chat_id=alert.telegram_id, text=alert.options['NewsText'], parse_mode=ParseMode.HTML)
                 case _:
                     continue
         except:
             pass
 
 
-def generate_group_deleted_message(alert: UserAlert) -> str:
-    result = f"⚠️ <b>Ваша група '{alert.options['GroupName']}' була видалена з розкладу.</b>\n"
+def generate_group_removed_message(alert: UserAlert) -> str:
+    result = f"⚠️ <b>Ваша група '{alert.options['LessonName']}',  була видалена з розкладу.</b>\n"
     result += "Будь ласка, оберіть нову групу командою /change_group."
-    result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку бота."
+    result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку @kaidigital_bot"
     return result
 
 
-def generate_elective_deleted_message(alert: UserAlert) -> str:
-    lesson_start_times = {
-        "1": "8:00",
-        "2": "9:50",
-        "3": "11:40",
-        "4": "13:30",
-        "5": "15:20",
-        "6": "17:10",
-        "7": "19:00",
-    }
-    result = f"⚠️ <b>Ваша вибірково пара була видалена з розкладу.</b>\n"
+def generate_source_removed_message(alert: UserAlert) -> str:
+    result = f"⚠️ <b>Ваша вибіркова дисципліна була видалена з розкладу.</b>\n"
     result += f"<b>Предмет:</b> {alert.options['LessonName']}\n"
     result += f"<b>Вид:</b> {alert.options['LessonType']}\n"
-    result += f"<b>Тиждень:</b> {(int(alert.options['LessonDay']) // 7) + 1}\n"
-    result += f"<b>День:</b> {calendar.day_name[int(alert.options['LessonDay']) % 7]}\n"
-    result += f"<b>Час:</b> {lesson_start_times[alert.options['LessonStartTime']]}\n\n"
+    result += f"<b>Потік:</b> {alert.options['SubGroupNumber']}\n"
+    result += "Ви можете додати нову вибіркову командою /elective_add."
+    result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку @kaidigital_bot"
+    return result
+
+
+def generate_entry_removed_message(alert: UserAlert) -> str:
+    result = f"⚠️ <b>Ваша вибіркова дисципліна була видалена з розкладу.</b>\n"
+    result += f"<b>Предмет:</b> {alert.options['LessonName']}\n"
+    result += f"<b>Вид:</b> {alert.options['LessonType']}\n"
+    result += f"<b>Тиждень:</b> {alert.options['LessonWeek']}\n"
+    result += f"<b>День:</b> {calendar.day_name[int(alert.options['LessonDay']) % 7].capitalize()}\n"
+    result += f"<b>Час:</b> {alert.options['LessonStartTime']}\n\n"
     result += "Аби додати іншу вибіркову скористайтесь /elective_add.\n"
-    result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку бота."
+    result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку @kaidigital_bot"
     return result
 
 
@@ -601,16 +724,15 @@ def main() -> None:
     token = os.environ["BOT_TOKEN"]
     application = Application.builder().token(token).build()
 
-    # existing handlers
+    # Existing handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("change_group", change_group))
     application.add_handler(CommandHandler(["schedule", "te"], schedule_command))
     application.add_handler(CommandHandler(["tomorrow", "te_t"], tomorrow_command))
     application.add_handler(CommandHandler("help", help_command))
-
     application.add_handler(CommandHandler("week", display_week))
 
-    # elective handlers
+    # Elective handlers
     application.add_handler(CommandHandler("elective_add", elective_add_command))
     application.add_handler(CommandHandler("elective_list", elective_list_command))
 

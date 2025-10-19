@@ -170,7 +170,7 @@ async def create_user_elective_source(telegram_id: int, lesson_source_id: int, l
         "lessonSourceId": lesson_source_id,
         "lessonType": lesson_type,
         "subgroupNumber": subgroup_number,
-    })
+    }, {})
     return result.status_code == 201
 
 
@@ -189,7 +189,7 @@ async def create_user_elective_entry(telegram_id: int, lesson_source_id: int, le
         "telegramId": telegram_id,
         "lessonSourceId": lesson_source_id,
         "lessonEntry": lesson_entry,
-    })
+    }, {})
     return result.status_code == 201
 
 

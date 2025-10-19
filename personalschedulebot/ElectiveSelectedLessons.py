@@ -1,6 +1,7 @@
 from typing import List
 
-from personalschedulebot import ElectiveSelectedEntry, ElectiveSelectedSource
+from personalschedulebot.ElectiveSelectedEntry import ElectiveSelectedEntry
+from personalschedulebot.ElectiveSelectedSource import ElectiveSelectedSource
 
 
 class ElectiveSelectedLessons:

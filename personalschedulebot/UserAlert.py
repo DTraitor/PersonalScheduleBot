@@ -4,7 +4,9 @@ from enum import Enum
 class UserAlertType(Enum):
     NONE = 0
     GROUP_REMOVED = 1
-    ELECTIVE_LESSON_REMOVED = 2
+    SOURCE_REMOVED = 2
+    ENTRY_REMOVED = 3
+    NEWS = 4
 
 
 class UserAlert:
