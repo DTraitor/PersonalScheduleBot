@@ -36,7 +36,7 @@ from personalschedulebot.ScheduleAPI import (
     create_user_elective_entry,
     create_user_elective_source,
     delete_user_elective_entry,
-    delete_user_elective_source,
+    delete_user_elective_source, user_subgroups,
 )
 from personalschedulebot.UserAlert import UserAlert, UserAlertType
 
@@ -57,6 +57,8 @@ TEMP_ELECTIVE_ADD_METHOD = "temp_elective_add_method"  # "subgroup" or "manual"
 TEMP_ELECTIVE_LESSON_TYPE = "temp_elective_lesson_type"
 TEMP_ELECTIVE_WEEK = "temp_elective_week"
 TEMP_ELECTIVE_DAY = "temp_elective_day"
+TEMP_GROUP_CODE = "temp_group_code"
+TEMP_GROUP_ACTION = "temp_group_action"  # "create" or "change"
 
 # Constants
 ELECTIVE_PAGE_SIZE = 9
@@ -130,23 +132,9 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
         tg_id = update.message.from_user.id
 
         if await user_exists(tg_id):
-            result = await change_user_group(tg_id, group_code)
-            if result == 0:
-                await update.message.reply_html(f"Група змінена на <b>{group_code}</b>.")
-            elif result == 1:
-                await update.message.reply_html(f"Не вірна назва групи.")
-            else:
-                await update.message.reply_text("Не вдалося змінити групу.\nЗверніться у підтримку @kaidigital_bot.")
+            await handle_group_change(update, context, tg_id, group_code, "change")
         else:
-            result = await create_user(tg_id, group_code)
-            if result == 0:
-                await update.message.reply_html(
-                    f"Група встановлена: <b>{group_code}</b>.\n\nВикористайте /schedule щоб отримати розклад.\nВикористайте /elective_add для додавання вибіркових дисциплін."
-                )
-            elif result == 1:
-                await update.message.reply_html(f"Не вірна назва групи.")
-            else:
-                await update.message.reply_text("Не вдалося створити користувача.\nЗверніться у підтримку @kaidigital_bot.")
+            await handle_group_change(update, context, tg_id, group_code, "create")
 
         context.user_data.pop(EXPECTING_MANUAL_GROUP, None)
         return
@@ -155,6 +143,94 @@ async def manual_group_message_handler(update: Update, context: ContextTypes.DEF
     if context.user_data.get(EXPECTING_ELECTIVE_NAME):
         await handle_elective_partial_name_input(update, context)
         return
+
+
+async def handle_group_change(update: Update, context: ContextTypes.DEFAULT_TYPE, tg_id: int, group_code: str, action: str) -> None:
+    """Handle group creation or change, optionally showing subgroup selection."""
+    # Store temporary data
+    context.user_data[TEMP_GROUP_CODE] = group_code
+    context.user_data[TEMP_GROUP_ACTION] = action
+
+    # Attempt initial group change/creation with default subgroup
+    if action == "create":
+        result = await create_user(tg_id, group_code)
+    else:
+        result = await change_user_group(tg_id, group_code)
+
+    if result == 1:
+        await update.message.reply_html("Не вірна назва групи.")
+        context.user_data.pop(TEMP_GROUP_CODE, None)
+        context.user_data.pop(TEMP_GROUP_ACTION, None)
+        return
+    elif result != 0:
+        await update.message.reply_text("Не вдалося оновити групу.\nЗверніться у підтримку @kaidigital_bot.")
+        context.user_data.pop(TEMP_GROUP_CODE, None)
+        context.user_data.pop(TEMP_GROUP_ACTION, None)
+        return
+
+    # Try to fetch available subgroups
+    try:
+        subgroups = await user_subgroups(tg_id)
+        # Filter out -1 (we'll add it explicitly)
+        available_subgroups = [sg for sg in subgroups if sg != -1]
+
+        if available_subgroups:
+            # Show subgroup selection
+            text = f"Оберіть підгрупу для групи <b>{group_code}</b>:"
+            kb = [[InlineKeyboardButton("Усі підгрупи", callback_data=f"GROUP_SUBGROUP|{tg_id}|-1")]]
+            for sg in sorted(available_subgroups):
+                kb.append([InlineKeyboardButton(f"Підгрупа {sg}", callback_data=f"GROUP_SUBGROUP|{tg_id}|{sg}")])
+            await update.message.reply_html(text, reply_markup=InlineKeyboardMarkup(kb))
+        else:
+            # No subgroups available, just confirm
+            if action == "create":
+                await update.message.reply_html(
+                    f"Група встановлена: <b>{group_code}</b>.\n\nВикористайте /schedule щоб отримати розклад.\nВикористайте /elective_add для додавання вибіркових дисциплін."
+                )
+            else:
+                await update.message.reply_html(f"Група змінена на <b>{group_code}</b>.")
+            context.user_data.pop(TEMP_GROUP_CODE, None)
+            context.user_data.pop(TEMP_GROUP_ACTION, None)
+    except Exception as e:
+        logger.error(f"Error fetching subgroups: {e}")
+        # Silently continue without subgroup selection
+        if action == "create":
+            await update.message.reply_html(
+                f"Група встановлена: <b>{group_code}</b>.\n\nВикористайте /schedule щоб отримати розклад.\nВикористайте /elective_add для додавання вибіркових дисциплін."
+            )
+        else:
+            await update.message.reply_html(f"Група змінена на <b>{group_code}</b>.")
+        context.user_data.pop(TEMP_GROUP_CODE, None)
+        context.user_data.pop(TEMP_GROUP_ACTION, None)
+
+
+async def handle_group_subgroup_selected(query, context: ContextTypes.DEFAULT_TYPE, tg_id: int, subgroup: int) -> None:
+    """User selected a subgroup — update user with the selected subgroup."""
+    group_code = context.user_data.get(TEMP_GROUP_CODE)
+    action = context.user_data.get(TEMP_GROUP_ACTION)
+
+    if not group_code or not action:
+        await query.edit_message_text("Помилка: інформація про групу не знайдена.")
+        return
+
+    # Update user with selected subgroup
+    if action == "create":
+        result = await create_user(tg_id, group_code, subgroup)
+    else:
+        result = await change_user_group(tg_id, group_code, subgroup)
+
+    if result == 0:
+        if subgroup == -1:
+            await query.edit_message_text(f"✅ Підгрупа встановлена на <b>Усі підгрупи</b>.", parse_mode=ParseMode.HTML)
+        else:
+            await query.edit_message_text(f"✅ Підгрупа встановлена на <b>Підгрупа {subgroup}</b>.", parse_mode=ParseMode.HTML)
+    else:
+        await query.edit_message_text("❌ Не вдалося встановити підгрупу. Спробуйте пізніше.")
+
+    # Cleanup
+    context.user_data.pop(TEMP_GROUP_CODE, None)
+    context.user_data.pop(TEMP_GROUP_ACTION, None)
+
 
 def build_schedule_nav_keyboard(target_date: datetime) -> List[List[InlineKeyboardButton]]:
     cur_date = target_date.strftime("%Y-%m-%d")
@@ -220,6 +296,15 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     parts = (query.data or "").split("|")
     if not parts:
+        return
+
+    # Handle group subgroup selection
+    if parts[0] == "GROUP_SUBGROUP":  # parts: GROUP_SUBGROUP|<telegramId>|<subgroup>
+        if len(parts) != 3:
+            return
+        tg_id = int(parts[1])
+        subgroup = int(parts[2])
+        await handle_group_subgroup_selected(query, context, tg_id, subgroup)
         return
 
     # Schedule navigation
@@ -290,14 +375,37 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
         await handle_elective_manual_time_selected(query, context, lesson_id, lesson_type, week, day, entry_id)
         return
 
-    if parts[0] == "EL_LIST":  # parts: EL_LIST
-        await handle_elective_list_view(query, context)
+    if parts[0] == "EL_LIST_MAIN":  # parts: EL_LIST_MAIN
+        await handle_elective_list_main_view(query, context)
         return
 
-    if parts[0] == "EL_REMOVE":  # parts: EL_REMOVE|<source|entry>|<id>
-        remove_type = parts[1]  # "source" or "entry"
-        item_id = int(parts[2])
-        await handle_elective_remove(query, context, remove_type, item_id)
+    if parts[0] == "EL_LIST_LESSON":  # parts: EL_LIST_LESSON|<lessonIndex>
+        lesson_index = int(parts[1])
+        await handle_elective_list_lesson_view(query, context, lesson_index)
+        return
+
+    if parts[0] == "EL_LIST_SOURCE":  # parts: EL_LIST_SOURCE|<sourceId>
+        source_id = int(parts[1])
+        await handle_elective_list_source_view(query, context, source_id)
+        return
+
+    if parts[0] == "EL_DELETE_SOURCE":  # parts: EL_DELETE_SOURCE|<sourceId>
+        source_id = int(parts[1])
+        await handle_elective_delete_source(query, context, source_id)
+        return
+
+    if parts[0] == "EL_DELETE_ENTRY":  # parts: EL_DELETE_ENTRY|<entryId>
+        entry_id = int(parts[1])
+        await handle_elective_delete_entry(query, context, entry_id)
+        return
+
+    if parts[0] == "EL_LIST_BACK":  # Navigate back in hierarchy
+        back_to = parts[1] if len(parts) > 1 else "main"
+        if back_to == "main":
+            await handle_elective_list_main_view(query, context)
+        elif back_to.startswith("lesson_"):
+            lesson_index = int(back_to.split("_")[1])
+            await handle_elective_list_lesson_view(query, context, lesson_index)
         return
 
     # Unknown callback: ignore
@@ -580,17 +688,20 @@ async def elective_list_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_html("Ви ще не вибрали групу. Використайте /start щоб встановити групу.")
         return
 
-    await handle_elective_list_view(update, update.message.from_user.id, context)
+    await handle_elective_list_main_view(update, context)
 
 
-async def handle_elective_list_view(update_or_query, user_id: int, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Display user's elective lessons with remove options."""
-    tg_id = user_id
+async def handle_elective_list_main_view(update_or_query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Display list of unique lessons with sources/entries grouped."""
+    if isinstance(update_or_query, Update):
+        tg_id = update_or_query.message.from_user.id
+    else:
+        tg_id = update_or_query.from_user.id
 
     try:
         selected_lessons = await get_user_elective_lessons(tg_id)
     except Exception as e:
-        msg = "❌ Помилка при отриманні списку вибіркових предметів."
+        msg = "Помилка при отриманні списку вибіркових предметів."
         if isinstance(update_or_query, Update) and update_or_query.message:
             await update_or_query.message.reply_text(msg)
         else:
@@ -606,25 +717,32 @@ async def handle_elective_list_view(update_or_query, user_id: int, context: Cont
             await update_or_query.edit_message_text(msg)
         return
 
+    # Group lessons by name
+    lessons_dict = {}
+
+    # Add sources
+    for src in selected_lessons.sources:
+        if src.name not in lessons_dict:
+            lessons_dict[src.name] = {"sources": [], "entries": []}
+        lessons_dict[src.name]["sources"].append(src)
+
+    # Add entries
+    for entry in selected_lessons.entries:
+        if entry.entry_name not in lessons_dict:
+            lessons_dict[entry.entry_name] = {"sources": [], "entries": []}
+        lessons_dict[entry.entry_name]["entries"].append(entry)
+
+    # Store in context for navigation
+    context.user_data["elective_lessons_dict"] = lessons_dict
+    context.user_data["elective_lessons_list"] = list(lessons_dict.keys())
+
     text = "<b>Ваші вибіркові:</b>\n\n"
+    for i, lesson_name in enumerate(context.user_data["elective_lessons_list"]):
+        text += f"{i + 1}. {lesson_name}\n"
 
     kb = []
-
-    # entries (manual adding)
-    if selected_lessons.entries:
-        text += "<u>Додані вручну:</u>\n"
-        for src in selected_lessons.entries:
-            text += f"• {src.entry_name}\n"
-            kb.append([InlineKeyboardButton(f"❌ {src.entry_name[:50]}", callback_data=f"EL_REMOVE|entry|{src.selected_entry_id}")])
-
-    # sources (subgroup adding)
-    if selected_lessons.sources:
-        if selected_lessons.sources:
-            text += "\n"
-        text += "<u>Додані за потоком:</u>\n"
-        for entry in selected_lessons.sources:
-            text += f"• {entry.name} - потік {entry.subgroup_number}\n"
-            kb.append([InlineKeyboardButton(f"❌ {entry.name[:50]}", callback_data=f"EL_REMOVE|source|{entry.selected_source_id}")])
+    for i, lesson_name in enumerate(context.user_data["elective_lessons_list"]):
+        kb.append([InlineKeyboardButton(lesson_name[:50], callback_data=f"EL_LIST_LESSON|{i}")])
 
     if isinstance(update_or_query, Update) and update_or_query.message:
         await update_or_query.message.reply_html(text, reply_markup=InlineKeyboardMarkup(kb))
@@ -632,26 +750,137 @@ async def handle_elective_list_view(update_or_query, user_id: int, context: Cont
         await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 
-async def handle_elective_remove(query, context: ContextTypes.DEFAULT_TYPE, remove_type: str, item_id: int) -> None:
-    """Remove elective source or entry."""
-    tg_id = query.from_user.id
+async def handle_elective_list_lesson_view(update_or_query, context: ContextTypes.DEFAULT_TYPE, lesson_index: int) -> None:
+    """Display all sources and entries for a specific lesson."""
+    lessons_dict = context.user_data.get("elective_lessons_dict", {})
+    lessons_list = context.user_data.get("elective_lessons_list", [])
+
+    if lesson_index >= len(lessons_list):
+        await update_or_query.edit_message_text("Помилка: урок не знайдений.")
+        return
+
+    lesson_name = lessons_list[lesson_index]
+    lesson_data = lessons_dict[lesson_name]
+
+    text = f"<b>{lesson_name}</b>\n\n"
+
+    kb = []
+
+    # Add sources
+    if lesson_data["sources"]:
+        text += "<u>За потоком:</u>\n"
+        for src in lesson_data["sources"]:
+            text += f"• Потік {src.subgroup_number}\n"
+            kb.append([InlineKeyboardButton(f"Потік {src.subgroup_number}", callback_data=f"EL_LIST_SOURCE|{src.selected_source_id}")])
+
+    # Add entries
+    if lesson_data["entries"]:
+        if lesson_data["sources"]:
+            text += "\n"
+        text += "<u>Додані вручну:</u>\n"
+        for entry in lesson_data["entries"]:
+            day_name = calendar.day_name[entry.day_of_week - 1].capitalize() if 1 <= entry.day_of_week <= 7 else str(entry.day_of_week)
+            week_str = "2" if entry.week_number else "1"
+            text += f"• Тиждень {week_str}, {day_name}, {entry.start_time.strftime('%H:%M')}\n"
+            kb.append([InlineKeyboardButton(
+                f"Тиждень {week_str}, {day_name}, {entry.start_time.strftime('%H:%M')}",
+                callback_data=f"EL_LIST_SOURCE|{entry.selected_entry_id}"
+            )])
+
+    # Back button
+    kb.append([InlineKeyboardButton("Назад", callback_data="EL_LIST_BACK|main")])
+
+    await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_list_source_view(update_or_query, context: ContextTypes.DEFAULT_TYPE, source_id: int) -> None:
+    """Display details about a specific source or entry."""
+    lessons_dict = context.user_data.get("elective_lessons_dict", {})
+
+    source_obj = None
+    entry_obj = None
+    lesson_name = None
+    lesson_index = None
+
+    # Find the source or entry
+    for idx, (name, data) in enumerate(zip(context.user_data.get("elective_lessons_list", []), [lessons_dict.get(l) for l in context.user_data.get("elective_lessons_list", [])])):
+        for src in data["sources"]:
+            if src.selected_source_id == source_id:
+                source_obj = src
+                lesson_name = name
+                lesson_index = idx
+                break
+        for entry in data["entries"]:
+            if entry.selected_entry_id == source_id:
+                entry_obj = entry
+                lesson_name = name
+                lesson_index = idx
+                break
+        if source_obj or entry_obj:
+            break
+
+    if not source_obj and not entry_obj:
+        await update_or_query.edit_message_text("Помилка: елемент не знайдений.")
+        return
+
+    if source_obj:
+        text = f"<b>{lesson_name}</b>\n\n"
+        text += f"<b>Тип:</b> За потоком\n"
+        text += f"<b>Потік:</b> {source_obj.subgroup_number}\n"
+        kb = [
+            [InlineKeyboardButton("Видалити", callback_data=f"EL_DELETE_SOURCE|{source_obj.selected_source_id}")],
+            [InlineKeyboardButton("Назад", callback_data=f"EL_LIST_BACK|lesson_{lesson_index}")]
+        ]
+    else:
+        day_name = calendar.day_name[entry_obj.day_of_week - 1].capitalize() if 1 <= entry_obj.day_of_week <= 7 else str(entry_obj.day_of_week)
+        week_str = "2" if entry_obj.week_number else "1"
+        text = f"<b>{lesson_name}</b>\n\n"
+        text += f"<b>Тип:</b> Додано вручну\n"
+        if entry_obj.type:
+            text += f"<b>Вид:</b> {entry_obj.type}\n"
+        text += f"<b>Тиждень:</b> {week_str}\n"
+        text += f"<b>День:</b> {day_name}\n"
+        text += f"<b>Час:</b> {entry_obj.start_time.strftime('%H:%M')}\n"
+        kb = [
+            [InlineKeyboardButton("Видалити", callback_data=f"EL_DELETE_ENTRY|{entry_obj.selected_entry_id}")],
+            [InlineKeyboardButton("Назад", callback_data=f"EL_LIST_BACK|lesson_{lesson_index}")]
+        ]
+
+    await update_or_query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_elective_delete_source(update_or_query, context: ContextTypes.DEFAULT_TYPE, source_id: int) -> None:
+    """Delete a source and refresh the view."""
+    tg_id = update_or_query.from_user.id
 
     try:
-        if remove_type == "source":
-            ok = await delete_user_elective_source(tg_id, item_id)
-        else:  # entry
-            ok = await delete_user_elective_entry(tg_id, item_id)
-
+        ok = await delete_user_elective_source(tg_id, source_id)
         if ok:
-            await query.answer("✅ Видалено", show_alert=False)
-            # Refresh the list
-            await handle_elective_list_view(query, query.from_user.id, context)
+            await update_or_query.answer("Видалено", show_alert=False)
+            # Refresh to main view
+            await handle_elective_list_main_view(update_or_query, context)
         else:
-            await query.answer("❌ Не вдалося видалити. Спробуйте пізніше.", show_alert=True)
+            await update_or_query.answer("Не вдалося видалити. Спробуйте пізніше.", show_alert=True)
     except Exception as e:
-        await query.answer("❌ Помилка при видаленні.", show_alert=True)
-        logger.error(f"Error removing elective: {e}")
+        await update_or_query.answer("Помилка при видаленні.", show_alert=True)
+        logger.error(f"Error deleting elective source: {e}")
 
+
+async def handle_elective_delete_entry(update_or_query, context: ContextTypes.DEFAULT_TYPE, entry_id: int) -> None:
+    """Delete an entry and refresh the view."""
+    tg_id = update_or_query.from_user.id
+
+    try:
+        ok = await delete_user_elective_entry(tg_id, entry_id)
+        if ok:
+            await update_or_query.answer("Видалено", show_alert=False)
+            # Refresh to main view
+            await handle_elective_list_main_view(update_or_query, context)
+        else:
+            await update_or_query.answer("Не вдалося видалити. Спробуйте пізніше.", show_alert=True)
+    except Exception as e:
+        await update_or_query.answer("Помилка при видаленні.", show_alert=True)
+        logger.error(f"Error deleting elective entry: {e}")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_html(
@@ -691,7 +920,7 @@ async def alert_users(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def generate_group_removed_message(alert: UserAlert) -> str:
     result = f"⚠️ <b>Ваша група '{alert.options['LessonName']}',  була видалена з розкладу.</b>\n"
-    result += "Будь ласка, оберіть нову групу командою /change_group."
+    result += "Будь ласка, оберіть нову групу командою /change_group.\n"
     result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку @kaidigital_bot"
     return result
 
@@ -701,7 +930,7 @@ def generate_source_removed_message(alert: UserAlert) -> str:
     result += f"<b>Предмет:</b> {alert.options['LessonName']}\n"
     result += f"<b>Вид:</b> {alert.options['LessonType']}\n"
     result += f"<b>Потік:</b> {alert.options['SubGroupNumber']}\n"
-    result += "Ви можете додати нову вибіркову командою /elective_add."
+    result += "Ви можете додати нову вибіркову командою /elective_add.\n"
     result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку @kaidigital_bot"
     return result
 
@@ -710,7 +939,7 @@ def generate_entry_removed_message(alert: UserAlert) -> str:
     result = f"⚠️ <b>Ваша вибіркова дисципліна була видалена з розкладу.</b>\n"
     result += f"<b>Предмет:</b> {alert.options['LessonName']}\n"
     result += f"<b>Вид:</b> {alert.options['LessonType']}\n"
-    result += f"<b>Тиждень:</b> {alert.options['LessonWeek']}\n"
+    result += f"<b>Тиждень:</b> {'2' if alert.options['LessonWeek'] == 'True' else '1'}\n"
     result += f"<b>День:</b> {calendar.day_name[int(alert.options['LessonDay']) % 7].capitalize()}\n"
     result += f"<b>Час:</b> {alert.options['LessonStartTime']}\n\n"
     result += "Аби додати іншу вибіркову скористайтесь /elective_add.\n"

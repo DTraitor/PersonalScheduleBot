@@ -57,17 +57,6 @@ async def get_schedule(
     return [Lesson(item) for item in result.json()]
 
 
-async def get_faculties() -> List[str]:
-    return (await make_api_get_request("/group/faculties", {})).json()
-
-
-async def get_groups(faculty: str, bachelor: bool) -> List[str]:
-    return (await make_api_get_request("/group/degree", {
-        "facultyName": faculty,
-        "bachelor": bachelor,
-    })).json()
-
-
 async def user_exists(telegram_id: int) -> bool:
     result: httpx.Response = await make_api_get_request("/user/exists", {
         "telegramId": telegram_id,
@@ -75,10 +64,18 @@ async def user_exists(telegram_id: int) -> bool:
     return result.json()
 
 
-async def create_user(telegram_id: int, group_code: str) -> int:
+async def user_subgroups(telegram_id: int) -> List[int]:
+    result: httpx.Response = await make_api_get_request("/group/subgroups", {
+        "telegramId": telegram_id,
+    })
+    return result.json()
+
+
+async def create_user(telegram_id: int, group_code: str, subgroup: int = -1) -> int:
     result: httpx.Response = await make_api_post_request("/user", {}, {
         "TelegramId": telegram_id,
         "GroupName": group_code,
+        "SubGroup": subgroup,
     })
     match result.status_code:
         case 201:
@@ -89,10 +86,11 @@ async def create_user(telegram_id: int, group_code: str) -> int:
             return -1
 
 
-async def change_user_group(telegram_id: int, new_group_code: str) -> int:
+async def change_user_group(telegram_id: int, new_group_code: str, subgroup: int = -1) -> int:
     result: httpx.Response = await make_api_patch_request("/user/group", {}, {
         "TelegramId": telegram_id,
         "GroupName": new_group_code,
+        "SubGroup": subgroup,
     })
     match result.status_code:
         case 200:
