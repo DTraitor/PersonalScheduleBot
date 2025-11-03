@@ -940,7 +940,7 @@ def generate_entry_removed_message(alert: UserAlert) -> str:
     result += f"<b>Предмет:</b> {alert.options['LessonName']}\n"
     result += f"<b>Вид:</b> {alert.options['LessonType']}\n"
     result += f"<b>Тиждень:</b> {'2' if alert.options['LessonWeek'] == 'True' else '1'}\n"
-    result += f"<b>День:</b> {calendar.day_name[int(alert.options['LessonDay']) % 7].capitalize()}\n"
+    result += f"<b>День:</b> {calendar.day_name[(int(alert.options['LessonDay']) - 1) % 7].capitalize()}\n"
     result += f"<b>Час:</b> {alert.options['LessonStartTime']}\n\n"
     result += "Аби додати іншу вибіркову скористайтесь /elective_add.\n"
     result += "Якщо вважаєте, що сталася помилка - зверніться у підтримку @kaidigital_bot"
