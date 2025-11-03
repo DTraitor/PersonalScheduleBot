@@ -71,6 +71,13 @@ async def user_subgroups(telegram_id: int) -> List[int]:
     return result.json()
 
 
+async def user_groups(telegram_id: int) -> List[str]:
+    result: httpx.Response = await make_api_get_request("/group/user", {
+        "telegramId": telegram_id,
+    })
+    return result.json()
+
+
 async def create_user(telegram_id: int, group_code: str, subgroup: int = -1) -> int:
     result: httpx.Response = await make_api_post_request("/user", {}, {
         "TelegramId": telegram_id,

@@ -36,7 +36,7 @@ from personalschedulebot.ScheduleAPI import (
     create_user_elective_entry,
     create_user_elective_source,
     delete_user_elective_entry,
-    delete_user_elective_source, user_subgroups,
+    delete_user_elective_source, user_subgroups, user_groups,
 )
 from personalschedulebot.UserAlert import UserAlert, UserAlertType
 
@@ -244,10 +244,12 @@ async def render_schedule(update_or_query, context: ContextTypes.DEFAULT_TYPE, t
     """General function to get schedule, apply timezone, render, and send UTC datetime."""
     tg_id = update_or_query.from_user.id if from_callback else update_or_query.message.from_user.id
 
-    if not await user_exists(tg_id):
+    if await is_command_allowed(tg_id):
         if not from_callback:
             await update_or_query.message.reply_html("Ви ще не вибрали групу.")
             await ask_for_group(update_or_query, context)
+        else:
+            await update_or_query.answer("Ви ще не вибрали групу.", show_alert=True)
         return
 
     # Use current date if not provided
@@ -293,9 +295,9 @@ async def tomorrow_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer()
     parts = (query.data or "").split("|")
     if not parts:
+        await query.answer()
         return
 
     # Handle group subgroup selection
@@ -305,6 +307,7 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
         tg_id = int(parts[1])
         subgroup = int(parts[2])
         await handle_group_subgroup_selected(query, context, tg_id, subgroup)
+        await query.answer()
         return
 
     # Schedule navigation
@@ -318,24 +321,28 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
             return
         new_date = current_date + timedelta(days=-1 if parts[2] == "PREV" else 1 if parts[2] == "NEXT" else 0)
         await render_schedule(query, context, target_date=new_date, from_callback=True)
+        await query.answer()
         return
 
     # Elective callbacks start with EL_
     if parts[0] == "EL_LESSON":  # parts: EL_LESSON|<lessonId>
         lesson_id = int(parts[1])
         await handle_elective_lesson_selected(query, context, lesson_id)
+        await query.answer()
         return
 
     if parts[0] == "EL_METHOD":  # parts: EL_METHOD|<lessonId>|<method>
         lesson_id = int(parts[1])
         method = parts[2]  # "subgroup" or "manual"
         await handle_elective_method_selected(query, context, lesson_id, method)
+        await query.answer()
         return
 
     if parts[0] == "EL_SUBGROUP_TYPE":  # parts: EL_SUBGROUP_TYPE|<lessonId>|<type>
         lesson_id = int(parts[1])
         lesson_type = parts[2]
         await handle_elective_subgroup_type_selected(query, context, lesson_id, lesson_type)
+        await query.answer()
         return
 
     if parts[0] == "EL_SUBGROUP":  # parts: EL_SUBGROUP|<lessonId>|<type>|<subgroup>
@@ -343,12 +350,14 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
         lesson_type = parts[2]
         subgroup = int(parts[3])
         await handle_elective_subgroup_selected(query, context, lesson_id, lesson_type, subgroup)
+        await query.answer()
         return
 
     if parts[0] == "EL_MANUAL_TYPE":  # parts: EL_MANUAL_TYPE|<lessonId>|<type>
         lesson_id = int(parts[1])
         lesson_type = parts[2]
         await handle_elective_manual_type_selected(query, context, lesson_id, lesson_type)
+        await query.answer()
         return
 
     if parts[0] == "EL_MANUAL_WEEK":  # parts: EL_MANUAL_WEEK|<lessonId>|<type>|<week>
@@ -356,6 +365,7 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
         lesson_type = parts[2]
         week = parts[3] == 'True'
         await handle_elective_manual_week_selected(query, context, lesson_id, lesson_type, week)
+        await query.answer()
         return
 
     if parts[0] == "EL_MANUAL_DAY":  # parts: EL_MANUAL_DAY|<lessonId>|<type>|<week>|<day>
@@ -364,6 +374,7 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
         week = parts[3] == 'True'
         day = int(parts[4])
         await handle_elective_manual_day_selected(query, context, lesson_id, lesson_type, week, day)
+        await query.answer()
         return
 
     if parts[0] == "EL_MANUAL_TIME":  # parts: EL_MANUAL_TIME|<lessonId>|<type>|<week>|<day>|<time>
@@ -373,30 +384,36 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
         day = int(parts[4])
         entry_id = int(parts[5])
         await handle_elective_manual_time_selected(query, context, lesson_id, lesson_type, week, day, entry_id)
+        await query.answer()
         return
 
     if parts[0] == "EL_LIST_MAIN":  # parts: EL_LIST_MAIN
         await handle_elective_list_main_view(query, context)
+        await query.answer()
         return
 
     if parts[0] == "EL_LIST_LESSON":  # parts: EL_LIST_LESSON|<lessonIndex>
         lesson_index = int(parts[1])
         await handle_elective_list_lesson_view(query, context, lesson_index)
+        await query.answer()
         return
 
     if parts[0] == "EL_LIST_SOURCE":  # parts: EL_LIST_SOURCE|<sourceId>
         source_id = int(parts[1])
         await handle_elective_list_source_view(query, context, source_id)
+        await query.answer()
         return
 
     if parts[0] == "EL_DELETE_SOURCE":  # parts: EL_DELETE_SOURCE|<sourceId>
         source_id = int(parts[1])
         await handle_elective_delete_source(query, context, source_id)
+        await query.answer()
         return
 
     if parts[0] == "EL_DELETE_ENTRY":  # parts: EL_DELETE_ENTRY|<entryId>
         entry_id = int(parts[1])
         await handle_elective_delete_entry(query, context, entry_id)
+        await query.answer()
         return
 
     if parts[0] == "EL_LIST_BACK":  # Navigate back in hierarchy
@@ -406,6 +423,7 @@ async def callback_query_router(update: Update, context: ContextTypes.DEFAULT_TY
         elif back_to.startswith("lesson_"):
             lesson_index = int(back_to.split("_")[1])
             await handle_elective_list_lesson_view(query, context, lesson_index)
+        await query.answer()
         return
 
     # Unknown callback: ignore
@@ -420,8 +438,8 @@ async def elective_add_command(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
         return
     tg_id = update.message.from_user.id
-    if not await user_exists(tg_id):
-        await update.message.reply_html("Ви ще не вибрали групу. Використайте /start щоб встановити групу.")
+    if await is_command_allowed(tg_id):
+        await update.message.reply_html("Ви ще не обрали групу. Використайте /start щоб встановити групу.")
         return
 
     context.user_data[EXPECTING_ELECTIVE_NAME] = True
@@ -677,6 +695,13 @@ async def handle_elective_manual_time_selected(query, context: ContextTypes.DEFA
     context.user_data.pop("temp_elective_lesson_types", None)
     context.user_data.pop("temp_elective_lessons", None)
 
+async def is_command_allowed(telegram_id: int) -> bool:
+    try:
+        return not await user_exists(telegram_id) or len(await user_groups(telegram_id)) <= 0
+    except Exception as e:
+        logger.error(f"Error checking user allowed status: {e}")
+        return False
+
 
 async def elective_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show user's elective lessons."""
@@ -684,8 +709,8 @@ async def elective_list_command(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
         return
     tg_id = update.message.from_user.id
-    if not await user_exists(tg_id):
-        await update.message.reply_html("Ви ще не вибрали групу. Використайте /start щоб встановити групу.")
+    if await is_command_allowed(tg_id):
+        await update.message.reply_html("Будь ласка, оберіть свою групу. Для цього використайте команду /change_group.")
         return
 
     await handle_elective_list_main_view(update, context)
@@ -913,8 +938,9 @@ async def alert_users(context: ContextTypes.DEFAULT_TYPE) -> None:
                 case UserAlertType.NEWS:
                     await context.bot.send_message(chat_id=alert.telegram_id, text=alert.options['NewsText'], parse_mode=ParseMode.HTML)
                 case _:
-                    continue
+                    logger.error(f"Unknown alert type: '{alert.alert_type}'. Data present: '{alert.options}'")
         except:
+            logger.exception(f"Error sending alert to user {alert.telegram_id}")
             pass
 
 
