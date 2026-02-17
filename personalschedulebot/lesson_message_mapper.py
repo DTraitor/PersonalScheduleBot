@@ -1,6 +1,5 @@
-import re
 from datetime import datetime
-from personalschedulebot.Lesson import Lesson
+from personalschedulebot.models import LessonDto
 from typing import List
 
 months_array = {
@@ -29,7 +28,7 @@ time_array = {
 }
 
 
-def generate_telegram_message_from_list(lessons: List[Lesson], date: datetime, week_number: int) -> str:
+def generate_telegram_message_from_list(lessons: List[LessonDto], date: datetime, week_number: int) -> str:
     result: str = f'<b>Розклад на {date.strftime("%d")} {months_array[date.strftime("%m")]}</b>\n'
     result += f'<b>{date.strftime("%A").capitalize()}</b>, {str(week_number)} тиждень\n\n'
     if not len(lessons):
@@ -38,10 +37,10 @@ def generate_telegram_message_from_list(lessons: List[Lesson], date: datetime, w
     #result += '\n\n• • • • • • • • • • • • • • • • • • •\n🤖 Надіслано ботом @schedulekai_bot'
     return result
 
-def generate_telegram_message(lesson: Lesson) -> str:
+def generate_telegram_message(lesson: LessonDto) -> str:
     result: str = ''
 
-    lesson_time = lesson.begin_time.strftime("%H:%M")
+    lesson_time = lesson.begin_time[:-3]
     if lesson_time in time_array:
         result += f'{time_array[lesson_time]} '
     else:
