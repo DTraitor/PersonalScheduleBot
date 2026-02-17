@@ -6,7 +6,7 @@
     <option name="PARENT_ENVS" value="true" />
     <envs>
       <env name="PYTHONUNBUFFERED" value="1" />
-      <env name="BOT_TOKEN" value="5874888936:AAE2COYOrNGm1BvSVyfUoY0w5fo_bu7UoQ4" />
+      <env name="BOT_TOKEN" value="i've changed it already so good luck" />
     </envs>
     <option name="SDK_HOME" value="" />
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/personalschedulebot" />
