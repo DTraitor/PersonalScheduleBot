@@ -413,6 +413,8 @@ async def handle_group_text(update: Update, context) -> None:
             await update.message.reply_html(f"Групу змінено на: {norm}")
         except Exception:
             await update.message.reply_html("Не вдалося змінити групу. Спробуйте ще раз пізніше.")
+            context.user_data.pop(CHANGING_GROUP_KEY, None)
+            context.user_data.pop(TEMP_GROUP_NAME_KEY, None)
 
 
 async def change_group_cancel_callback(update: Update, context) -> None:
