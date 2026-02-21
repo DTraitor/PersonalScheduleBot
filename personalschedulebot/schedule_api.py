@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from models import (
+from .models import (
     LevelReturn,
     LessonDescriptor,
     SelectedElectiveLessonInputOutput,
@@ -597,4 +597,3 @@ class ScheduleApiClient:
         )
         status, text = await self._request("DELETE", url)
         _raise_for_status(status, text)
-
