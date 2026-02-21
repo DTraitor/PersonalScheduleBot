@@ -22,7 +22,7 @@ from telegram.constants import ParseMode
 # New imports
 from personalschedulebot.schedule_api import ScheduleApiClient, NotFoundError, TooManyElementsError
 from personalschedulebot.lesson_message_mapper import generate_telegram_message_from_list
-from personalschedulebot.models import SelectedElectiveLessonInputOutput
+from personalschedulebot.models import SelectedElectiveLessonInputOutput, LevelReturn
 
 # Enable logging
 logging.basicConfig(
@@ -36,7 +36,6 @@ EXPECTING_MANUAL_GROUP = "expecting_manual_group"
 
 # Elective flow state keys
 EXPECTING_ELECTIVE_NAME = "expecting_elective_name"
-TEMP_ELECTIVE_LESSON_ID = "temp_elective_lesson_id"
 TEMP_ELECTIVE_ADD_METHOD = "temp_elective_add_method"  # "subgroup" or "manual"
 TEMP_ELECTIVE_LESSON_TYPE = "temp_elective_lesson_type"
 TEMP_ELECTIVE_WEEK = "temp_elective_week"
@@ -45,6 +44,7 @@ TEMP_GROUP_CODE = "temp_group_code"
 TEMP_GROUP_ACTION = "temp_group_action"  # "create" or "change"
 TEMP_ELECTIVE_SEARCH_RESULTS = "temp_elective_search_results"
 TEMP_ELECTIVE_LEVEL_ID = "temp_elective_level_id"
+TEMP_ELECTIVE_LESSON_NAME = "temp_elective_lesson_name"
 
 # Constants
 ELECTIVE_PAGE_SIZE = 9
@@ -79,6 +79,7 @@ def week_parity(reference_year: int, check_date: date = None) -> int:
 
 
 async def start(update: Update, context) -> None:
+    await ensure_user_exists(update, context)
     await cancel_change_flow(update, context)
     if not is_private(update):
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
@@ -139,9 +140,7 @@ async def get_schedule(target_date: datetime, telegram_id: int, context) -> list
     else:
         local_midnight = target_date.astimezone(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
 
-    utc_dt = local_midnight.astimezone(ZoneInfo("UTC"))
-    iso = utc_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-    lessons = await client.get_schedule(iso, telegram_id)
+    lessons = await client.get_schedule(local_midnight.strftime("%Y-%m-%dT%H:%M:%SZ"), telegram_id)
     return lessons
 
 
@@ -201,6 +200,7 @@ async def render_schedule(update: Update, context, target_date: datetime = None,
 
 
 async def schedule_command(update: Update, context) -> None:
+    await ensure_user_exists(update, context)
     await cancel_change_flow(update, context)
     # Allow /schedule [DD.MM]
     if context.args:
@@ -217,6 +217,7 @@ async def schedule_command(update: Update, context) -> None:
 
 
 async def tomorrow_command(update: Update, context) -> None:
+    await ensure_user_exists(update, context)
     await cancel_change_flow(update, context)
     user_zone = ZoneInfo("Europe/Kyiv")
     target = datetime.now(tz=user_zone) + timedelta(days=1)
@@ -300,6 +301,7 @@ def normalize_group_name(name: str) -> str:
 
 
 async def change_group_command(update: Update, context) -> None:
+    await ensure_user_exists(update, context)
     await cancel_change_flow(update, context)
     """Start change group flow: ask user to input group name and show current group."""
     tg_id = update.effective_user.id if update.effective_user else None
@@ -524,6 +526,7 @@ async def _render_electives_text(electives: list, page: int) -> str:
 
 
 async def elective_list_command(update: Update, context) -> None:
+    await ensure_user_exists(update, context)
     await cancel_change_flow(update, context)
     """Handler for /electives command - show first page of user's electives."""
     if not is_private(update):
@@ -648,10 +651,9 @@ async def elective_item_callback(update: Update, context) -> None:
 
     typ = found.lesson_type or "—"
     text = (
-        f"<b>{found.lesson_name}</b>\n"
-        f"Тип: {typ}\n"
-        f"Підгрупа: {found.subgroup_number}\n"
-        f"ID: {found.id}"
+        f"<b>Дисципліна: </b>{found.lesson_name}\n\n"
+        f"<b>Тип:</b> {typ}\n"
+        f"<b>Підгрупа:</b> {found.subgroup_number}"
     )
 
     kb = [
@@ -723,6 +725,7 @@ async def elective_delete_callback(update: Update, context) -> None:
 
 
 async def elective_add_command(update: Update, context) -> None:
+    await ensure_user_exists(update, context)
     await cancel_change_flow(update, context)
     if not is_private(update):
         await update.message.reply_text("Бот працює лише у приватних повідомленнях.")
@@ -731,9 +734,9 @@ async def elective_add_command(update: Update, context) -> None:
     # clear any previous elective-related state
     context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
     context.user_data.pop(TEMP_ELECTIVE_SEARCH_RESULTS, None)
-    context.user_data.pop(TEMP_ELECTIVE_LESSON_ID, None)
     context.user_data.pop(TEMP_ELECTIVE_LESSON_TYPE, None)
     context.user_data.pop(TEMP_ELECTIVE_LEVEL_ID, None)
+    context.user_data.pop(TEMP_ELECTIVE_LESSON_NAME, None)
 
     client: ScheduleApiClient = context.application.bot_data.get("schedule_api_client")
     if client is None:
@@ -742,21 +745,22 @@ async def elective_add_command(update: Update, context) -> None:
 
     # ask user to choose elective level first
     try:
-        levels = await client.get_elective_levels()
+        levels: List[LevelReturn] = await client.get_elective_levels()
     except Exception:
-        await update.message.reply_html("Не вдалося отримати рівні вибіркових. Продовжте, ввівши назву.")
-        # fallback to asking for name
-        context.user_data[EXPECTING_ELECTIVE_NAME] = True
-        kb = [[InlineKeyboardButton("Скасувати", callback_data="EL_ADD_CANCEL")]]
-        await update.message.reply_html("Введіть частину назви дисципліни, яку ви хочете додати:", reply_markup=InlineKeyboardMarkup(kb))
+        await update.message.reply_html("Не вдалося отримати рівні вибіркових. :(")
         return
 
     kb = []
     row = []
+    lvl: LevelReturn
+    levels.sort(key=lambda lev: lev.name)
     for lvl in levels:
         label = getattr(lvl, 'name', str(lvl))
+        label = label[11:-1].title()
+        index = label.find(',')
+        label = label[:index+1] + ' ' + label[index+2].upper() + label[index+3:]
         row.append(InlineKeyboardButton(label, callback_data=f"EL_LEVEL|{getattr(lvl, 'id', lvl)}"))
-        if len(row) >= 3:
+        if len(row) >= 2:
             kb.append(row)
             row = []
     if row:
@@ -798,8 +802,11 @@ async def elective_level_callback(update: Update, context) -> None:
     # mark expecting name
     context.user_data[EXPECTING_ELECTIVE_NAME] = True
     # give cancel option as separate message
+    # send a separate cancel hint to the user (use bot.send_message to avoid message object type issues)
     try:
-        await cq.message.reply_html("Якщо потрібно, натисніть Скасувати:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Скасувати", callback_data="EL_ADD_CANCEL")]]))
+        user_id = cq.from_user.id if getattr(cq, 'from_user', None) else None
+        if user_id:
+            await context.bot.send_message(chat_id=user_id, text="Якщо потрібно, натисніть Скасувати:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Скасувати", callback_data="EL_ADD_CANCEL")]]))
     except Exception:
         pass
 
@@ -814,18 +821,9 @@ async def handle_elective_name_text(update: Update, context) -> None:
         context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
         return
 
-    # Need user's source id (take first group)
-    try:
-        groups = await client.get_user_groups(tg_id)
-        if not groups:
-            await update.message.reply_html("Ви ще не вибрали групу. Використайте /change_group щоб обрати групу.")
-            context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
-            return
-        source_id = groups[0].source_id if hasattr(groups[0], 'source_id') else getattr(groups[0], 'sourceId', None)
-    except Exception:
-        await update.message.reply_html("Не вдалося отримати інформацію про вашу групу. Спробуйте пізніше.")
-        context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
-        return
+    # Determine source_id: prefer selected elective level (if set), otherwise use user's group source_id
+    # If a level was selected earlier, its id is used as the source identifier for searching.
+    source_id = context.user_data.get(TEMP_ELECTIVE_LEVEL_ID)
 
     try:
         level_id = context.user_data.get(TEMP_ELECTIVE_LEVEL_ID)
@@ -834,7 +832,7 @@ async def handle_elective_name_text(update: Update, context) -> None:
         await update.message.reply_html("Забагато результатів. Введіть більш точну назву.")
         return
     except NotFoundError:
-        await update.message.reply_html("Не знайдено дисциплінів за запитом.")
+        await update.message.reply_html("Не знайдено дисциплін за запитом.")
         return
     except Exception:
         await update.message.reply_html("Помилка при пошуку. Спробуйте пізніше.")
@@ -867,7 +865,7 @@ async def cancel_elective_add_callback(update: Update, context) -> None:
          # clear elective-related state
          context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
          context.user_data.pop(TEMP_ELECTIVE_SEARCH_RESULTS, None)
-         context.user_data.pop(TEMP_ELECTIVE_LESSON_ID, None)
+         context.user_data.pop(TEMP_ELECTIVE_LESSON_NAME, None)
          context.user_data.pop(TEMP_ELECTIVE_LESSON_TYPE, None)
          context.user_data.pop(TEMP_ELECTIVE_LEVEL_ID, None)
          try:
@@ -897,11 +895,10 @@ async def elective_select_callback(update: Update, context) -> None:
         await cq.answer("Невірний вибір.")
         return
 
-    selected = results[idx]
     # store selected source id and name
-    source_id = getattr(selected, 'source_id', None) or getattr(selected, 'sourceId', None) or getattr(selected, 'id', None)
-    lesson_name = getattr(selected, 'name', None) or getattr(selected, 'lesson_name', None) or str(selected)
-    context.user_data[TEMP_ELECTIVE_LESSON_ID] = source_id
+    source_id = context.user_data.get(TEMP_ELECTIVE_LEVEL_ID)
+    lesson_name = results[idx]
+    context.user_data[TEMP_ELECTIVE_LESSON_NAME] = lesson_name
     context.user_data[TEMP_ELECTIVE_LESSON_TYPE] = None
 
     client: ScheduleApiClient = context.application.bot_data.get("schedule_api_client")
@@ -954,15 +951,8 @@ async def elective_type_callback(update: Update, context) -> None:
         await cq.answer()
         return
     chosen_type = parts[1]
-    source_id = context.user_data.get(TEMP_ELECTIVE_LESSON_ID)
-    results = context.user_data.get(TEMP_ELECTIVE_SEARCH_RESULTS) or []
-    lesson_name = None
-    if results:
-        # try to find name from previously stored selection
-        for r in results:
-            if getattr(r, 'source_id', None) == source_id or getattr(r, 'sourceId', None) == source_id:
-                lesson_name = getattr(r, 'name', None) or getattr(r, 'lesson_name', None)
-                break
+    source_id = context.user_data.get(TEMP_ELECTIVE_LEVEL_ID)
+    lesson_name = context.user_data.get(TEMP_ELECTIVE_LESSON_NAME)
     context.user_data[TEMP_ELECTIVE_LESSON_TYPE] = chosen_type
     await cq.answer()
     await _ask_for_elective_subgroup(cq, context, source_id, lesson_name, chosen_type)
@@ -991,6 +981,7 @@ async def _ask_for_elective_subgroup(cq, context, lesson_source_id, lesson_name,
 
     kb = []
     row = []
+    subgroups.sort()
     for sg in subgroups:
         label = str(sg) if not isinstance(sg, dict) else str(sg.get('number', sg))
         row.append(InlineKeyboardButton(label, callback_data=f"EL_SUB|{label}"))
@@ -999,7 +990,6 @@ async def _ask_for_elective_subgroup(cq, context, lesson_source_id, lesson_name,
             row = []
     if row:
         kb.append(row)
-    kb.append([InlineKeyboardButton("Всі підгрупи", callback_data=f"EL_SUB|-1")])
     kb.append([InlineKeyboardButton("Скасувати", callback_data="EL_ADD_CANCEL")])
 
     try:
@@ -1025,14 +1015,9 @@ async def elective_subgroup_callback(update: Update, context) -> None:
         await cq.answer()
         return
 
-    source_id = context.user_data.get(TEMP_ELECTIVE_LESSON_ID)
+    source_id = context.user_data.get(TEMP_ELECTIVE_LEVEL_ID)
     lesson_type = context.user_data.get(TEMP_ELECTIVE_LESSON_TYPE)
-    results = context.user_data.get(TEMP_ELECTIVE_SEARCH_RESULTS) or []
-    lesson_name = None
-    for r in results:
-        if getattr(r, 'source_id', None) == source_id or getattr(r, 'sourceId', None) == source_id:
-            lesson_name = getattr(r, 'name', None) or getattr(r, 'lesson_name', None)
-            break
+    lesson_name = context.user_data.get(TEMP_ELECTIVE_LESSON_NAME)
 
     tg_id = cq.from_user.id if cq.from_user else None
     client: ScheduleApiClient = context.application.bot_data.get("schedule_api_client")
@@ -1059,9 +1044,9 @@ async def elective_subgroup_callback(update: Update, context) -> None:
     # clear state and confirm
     context.user_data.pop(EXPECTING_ELECTIVE_NAME, None)
     context.user_data.pop(TEMP_ELECTIVE_SEARCH_RESULTS, None)
-    context.user_data.pop(TEMP_ELECTIVE_LESSON_ID, None)
     context.user_data.pop(TEMP_ELECTIVE_LESSON_TYPE, None)
     context.user_data.pop(TEMP_ELECTIVE_LEVEL_ID, None)
+    context.user_data.pop(TEMP_ELECTIVE_LESSON_NAME, None)
 
     try:
         await cq.edit_message_text(f"Вибіркову <b>{lesson_name}</b> додано (підгрупа: {subgroup}).", parse_mode=ParseMode.HTML)
@@ -1070,6 +1055,42 @@ async def elective_subgroup_callback(update: Update, context) -> None:
             await cq.answer("Додано.")
         except Exception:
             pass
+
+
+# New helper to ensure API user exists for any incoming update
+async def ensure_user_exists(update: Update, context) -> None:
+    """Create a user with the Schedule API for any incoming update.
+
+    This function is registered as an early handler and must not stop or
+    interfere with other handlers. Any errors are ignored (logged) so bot
+    functionality continues even when API is down.
+    """
+    tg_id = None
+    # prefer effective_user
+    if getattr(update, 'effective_user', None):
+        tg_id = update.effective_user.id
+    else:
+        try:
+            if getattr(update, 'message', None) and getattr(update.message, 'from_user', None):
+                tg_id = update.message.from_user.id
+            elif getattr(update, 'callback_query', None) and getattr(update.callback_query, 'from_user', None):
+                tg_id = update.callback_query.from_user.id
+        except Exception:
+            tg_id = None
+
+    if tg_id is None:
+        return
+
+    client: ScheduleApiClient = context.application.bot_data.get("schedule_api_client")
+    if client is None:
+        return
+
+    try:
+        # best-effort: create user, ignore errors
+        await client.create_user(tg_id)
+    except Exception:
+        logger.debug("create_user failed for %s", tg_id, exc_info=True)
+        return
 
 
 def main() -> None:
@@ -1082,6 +1103,7 @@ def main() -> None:
     schedule_api_base = os.environ.get("SCHEDULE_API_BASE", "http://localhost:5110/")
     application.bot_data["schedule_api_client"] = ScheduleApiClient(schedule_api_base)
 
+    # Register early handler to ensure user exists for any incoming update
     # Existing handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("change_group", change_group_command))
@@ -1117,6 +1139,8 @@ def main() -> None:
             BotCommand("start", "Почати роботу з ботом"),
             BotCommand("schedule", "Розклад на сьогодні або дату"),
             BotCommand("tomorrow", "Розклад на завтра"),
+            BotCommand("electives", "Список обраних вибіркових дисциплін"),
+            BotCommand("elective_add", "Додати вибіркову дисципліну"),
             BotCommand("week", "Відобразити навчальний тиждень"),
             BotCommand("help", "Список команд"),
         ])
