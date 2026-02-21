@@ -207,12 +207,14 @@ class ScheduleApiClient:
             self,
             lesson_name: str,
             source_id: int,
+            level_id: Optional[int] = None,
     ) -> list[LessonDescriptor]:
         """GET /api/elective/lessons
 
         Args:
             lesson_name: Partial or full lesson name to search.
             source_id:   Source identifier to filter by.
+            level_id:    Optional elective level id to filter by.
 
         Returns:
             List of matching lesson descriptors.
@@ -224,7 +226,7 @@ class ScheduleApiClient:
         url = _build_url(
             self.base_url,
             "/api/elective/lessons",
-            {"lessonName": lesson_name, "sourceId": source_id},
+            {"lessonName": lesson_name, "sourceId": source_id, "levelId": level_id},
         )
         status, text = await self._request("GET", url)
         _raise_for_status(status, text)
