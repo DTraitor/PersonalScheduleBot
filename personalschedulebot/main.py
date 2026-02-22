@@ -297,7 +297,7 @@ def normalize_group_name(name: str) -> str:
         'N': 'Н', 'n': 'н',
         'R': 'Р', 'r': 'р'
     }
-    return ''.join(mapping.get(ch, ch) for ch in name)
+    return name[:6] + ''.join(mapping.get(ch, ch) for ch in name[6:])
 
 
 async def change_group_command(update: Update, context) -> None:
@@ -318,7 +318,7 @@ async def change_group_command(update: Update, context) -> None:
         # ignore errors showing current group
         pass
 
-    text = f"Введіть код вашої групи. Поточна група: {current}\n\nНаприклад: КН-01"
+    text = f"Введіть код вашої групи. Поточна група: {current}\n\nНаприклад: Б-121-22-3-ПІ"
     kb = [[InlineKeyboardButton("Скасувати", callback_data="CHANGE_GROUP_CANCEL")]]
 
     # mark state
